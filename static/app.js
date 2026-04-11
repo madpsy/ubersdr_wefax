@@ -176,10 +176,27 @@ function updateBadgeState(label, decoding, status) {
 
 document.getElementById('channel-select').addEventListener('change', function () {
   activeLabel = this.value;
-  // Clear the live drawing lock so the next channel_start can take over.
-  liveDrawingLabel = null;
   resetLiveCanvas();
-  document.getElementById('live-label').textContent = 'Waiting for signal…';
+
+  if (activeLabel) {
+    // If this channel is currently receiving, lock the live canvas onto it
+    // immediately so incoming lines start drawing without waiting for the
+    // next channel_start event.
+    const ch = channels.find(c => c.label === activeLabel);
+    if (ch && ch.decoding) {
+      liveDrawingLabel = activeLabel;
+      document.getElementById('live-label').textContent =
+        `Live: ${fmtFreq(ch.freq_hz)} — ${ch.label}`;
+    } else {
+      liveDrawingLabel = null;
+      document.getElementById('live-label').textContent = 'Waiting for signal…';
+    }
+  } else {
+    // "all channels" — clear lock; next channel_start will take over.
+    liveDrawingLabel = null;
+    document.getElementById('live-label').textContent = 'Waiting for signal…';
+  }
+
   // NOTE: audio selector is independent — do NOT call syncAudioToChannel here.
   // Connect SNR stream for the selected channel (or disconnect if "all").
   connectSNR(activeLabel);

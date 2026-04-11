@@ -127,6 +127,7 @@ function renderChannelSelector() {
 
 function renderAudioChannelSelector() {
   const sel = document.getElementById('audio-channel-select');
+  const prev = sel.value;
   while (sel.options.length > 1) sel.remove(1);
   for (const ch of channels) {
     const opt = document.createElement('option');
@@ -134,8 +135,9 @@ function renderAudioChannelSelector() {
     opt.textContent = `${fmtFreq(ch.freq_hz)} ${ch.audio_mode.toUpperCase()}`;
     sel.appendChild(opt);
   }
-  // Mirror the main channel selector (no audio restart — just keep in sync).
-  sel.value = activeLabel || '';
+  // Restore the user's previous audio channel selection (independent of the
+  // main channel filter — do NOT mirror activeLabel here).
+  if (prev) sel.value = prev;
 }
 
 function renderStatusBadges() {
@@ -178,8 +180,7 @@ document.getElementById('channel-select').addEventListener('change', function ()
   liveDrawingLabel = null;
   resetLiveCanvas();
   document.getElementById('live-label').textContent = 'Waiting for signal…';
-  // Sync audio preview dropdown and restart stream if playing.
-  syncAudioToChannel(activeLabel);
+  // NOTE: audio selector is independent — do NOT call syncAudioToChannel here.
   // Connect SNR stream for the selected channel (or disconnect if "all").
   connectSNR(activeLabel);
   resetGallery();

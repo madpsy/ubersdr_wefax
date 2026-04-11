@@ -614,6 +614,19 @@ document.getElementById('btn-audio-play').addEventListener('click', () => {
 
 document.getElementById('btn-audio-stop').addEventListener('click', stopAudioPreview);
 
+// When the audio channel dropdown changes, restart the preview on the new
+// channel if audio is currently playing.
+document.getElementById('audio-channel-select').addEventListener('change', function () {
+  if (audioPlaying) {
+    const label = this.value;
+    if (label) {
+      startAudioPreview(label);
+    } else {
+      stopAudioPreview();
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Poll channel status periodically
 // ---------------------------------------------------------------------------

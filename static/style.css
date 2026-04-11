@@ -89,6 +89,13 @@ select:focus { outline: 2px solid var(--accent); }
 .status-running     { border-color: var(--success); color: var(--success); }
 .status-reconnecting{ border-color: var(--warn);    color: var(--warn); }
 .status-stopped     { border-color: var(--danger);  color: var(--danger); }
+.status-receiving   { border-color: var(--accent);  color: var(--accent);
+                      animation: badge-pulse 1.2s ease-in-out infinite; }
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
 .status-unknown     { border-color: var(--text-dim);color: var(--text-dim); }
 
 /* ── Main layout ── */

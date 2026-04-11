@@ -18,7 +18,7 @@ const BASE_PATH = (typeof window.BASE_PATH === 'string') ? window.BASE_PATH : ''
 // State
 // ---------------------------------------------------------------------------
 
-let channels = [];          // [{label, freq_hz, audio_mode, status, …}]
+let channels = [];          // [{label, freq_hz, audio_mode, status, decoding, …}]
 let activeLabel = '';       // currently selected channel filter ('' = all)
 
 // Gallery
@@ -33,6 +33,11 @@ let liveCtx = null;
 let liveWidth = 0;
 let liveLineCount = 0;
 let liveLabel = '';
+
+// The channel label currently being drawn on the live canvas (null = none locked).
+// When "all" is selected, the first channel_start locks this; subsequent starts
+// from other channels are ignored until the current one finishes.
+let liveDrawingLabel = null;
 
 // Detail view
 let selectedID = null;
@@ -120,15 +125,40 @@ function renderStatusBadges() {
   el.innerHTML = '';
   for (const ch of channels) {
     const badge = document.createElement('span');
-    badge.className = 'status-badge status-' + (ch.status || 'unknown');
-    badge.textContent = `${fmtFreq(ch.freq_hz)} ${ch.status}`;
+    // Use 'receiving' class when actively decoding an image, otherwise use
+    // the connection status ('running', 'reconnecting', 'stopped').
+    const stateClass = ch.decoding ? 'receiving' : (ch.status || 'unknown');
+    badge.className = 'status-badge status-' + stateClass;
+    badge.dataset.label = ch.label;
+    badge.textContent = `${fmtFreq(ch.freq_hz)} ${ch.decoding ? 'receiving' : ch.status}`;
     badge.title = ch.label;
+    // Click badge to switch channel filter.
+    badge.style.cursor = 'pointer';
+    badge.addEventListener('click', () => {
+      const sel = document.getElementById('channel-select');
+      sel.value = ch.label;
+      sel.dispatchEvent(new Event('change'));
+    });
     el.appendChild(badge);
   }
 }
 
+// Update a single badge's state without a full re-render.
+function updateBadgeState(label, decoding, status) {
+  const badge = document.querySelector(`.status-badge[data-label="${label}"]`);
+  if (!badge) return;
+  const stateClass = decoding ? 'receiving' : (status || 'unknown');
+  badge.className = 'status-badge status-' + stateClass;
+  badge.textContent = fmtFreq(channels.find(c => c.label === label)?.freq_hz || 0) +
+    ' ' + (decoding ? 'receiving' : (status || ''));
+}
+
 document.getElementById('channel-select').addEventListener('change', function () {
   activeLabel = this.value;
+  // Clear the live drawing lock so the next channel_start can take over.
+  liveDrawingLabel = null;
+  resetLiveCanvas();
+  document.getElementById('live-label').textContent = 'Waiting for signal…';
   resetGallery();
   loadMoreImages();
   reconnectSSE();
@@ -399,15 +429,9 @@ function connectSSE() {
     const ev = JSON.parse(e.data);
     const data = ev.data;
     if (!data) return;
-    // Filter by active channel if set.
-    if (activeLabel && data.label !== activeLabel) return;
 
-    // Update live label.
-    if (liveLabel !== data.label) {
-      liveLabel = data.label;
-      document.getElementById('live-label').textContent =
-        `Live: ${fmtFreq(data.freq_hz)} — ${data.label}`;
-    }
+    // Only draw lines from the channel currently locked for live display.
+    if (data.label !== liveDrawingLabel) return;
 
     // Decode base64 pixels.
     const b64 = data.pixels_b64;
@@ -423,14 +447,41 @@ function connectSSE() {
     const ev = JSON.parse(e.data);
     const data = ev.data;
     if (!data) return;
+
+    // Update badge for this channel immediately.
+    updateBadgeState(data.label, true, 'running');
+
+    // If a specific channel is selected, only respond to that one.
     if (activeLabel && data.label !== activeLabel) return;
+
+    // If we are already drawing a different channel, ignore this start —
+    // the user will see the badge turn 'receiving' and can switch if desired.
+    if (liveDrawingLabel !== null && liveDrawingLabel !== data.label) return;
+
+    // Lock onto this channel and start a fresh canvas.
+    liveDrawingLabel = data.label;
     resetLiveCanvas();
     liveLabel = data.label;
     document.getElementById('live-label').textContent =
-      `Live: ${fmtFreq(data.freq_hz)} — ${data.label} (START)`;
+      `Live: ${fmtFreq(data.freq_hz)} — ${data.label}`;
     // Show live panel if detail is not open.
     if (!selectedID) {
       document.getElementById('live-panel').classList.remove('hidden');
+    }
+  });
+
+  sseSource.addEventListener('channel_stop', e => {
+    const ev = JSON.parse(e.data);
+    const data = ev.data;
+    if (!data) return;
+
+    // Update badge for this channel immediately.
+    updateBadgeState(data.label, false, 'running');
+
+    // Unlock live canvas if this was the channel being drawn.
+    if (liveDrawingLabel === data.label) {
+      liveDrawingLabel = null;
+      document.getElementById('live-label').textContent = 'Waiting for signal…';
     }
   });
 
@@ -438,6 +489,13 @@ function connectSSE() {
     const ev = JSON.parse(e.data);
     const rec = ev.data;
     if (!rec) return;
+
+    // Unlock live canvas when the image is saved (channel finished).
+    if (liveDrawingLabel === rec.label) {
+      liveDrawingLabel = null;
+      document.getElementById('live-label').textContent = 'Waiting for signal…';
+    }
+
     if (activeLabel && rec.label !== activeLabel) return;
     // Prepend to gallery.
     galleryRecords.unshift(rec);

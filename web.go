@@ -232,6 +232,9 @@ func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*we
 		var out []map[string]interface{}
 		for _, ch := range channels {
 			snap := ch.inst.statusSnapshot()
+			ch.mu.Lock()
+			snap["decoding"] = ch.decoding
+			ch.mu.Unlock()
 			out = append(out, snap)
 		}
 		writeJSON(w, out)

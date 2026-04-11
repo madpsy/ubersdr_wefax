@@ -27,6 +27,7 @@ type wefaxChannel struct {
 
 	mu          sync.Mutex
 	currentImg  *inProgressImage // nil when not receiving
+	decoding    bool             // true while an image is in progress
 	cancelAssem context.CancelFunc
 }
 
@@ -159,6 +160,7 @@ func (c *wefaxChannel) handleStart() {
 		audioMode: c.inst.audioMode,
 		label:     c.label,
 	}
+	c.decoding = true
 	log.Printf("[%s] START — new image begun", c.label)
 
 	// Notify SSE clients of a new live image starting.
@@ -172,10 +174,16 @@ func (c *wefaxChannel) handleStop() {
 	c.mu.Lock()
 	img := c.currentImg
 	c.currentImg = nil
+	c.decoding = false
 	c.mu.Unlock()
 
 	if img == nil {
 		log.Printf("[%s] STOP received but no image in progress", c.label)
+		// Still emit channel_stop so the frontend badge updates.
+		c.hub.broadcast(sseEvent{
+			Event: "channel_stop",
+			Data:  map[string]interface{}{"label": c.label, "freq_hz": c.inst.freqHz},
+		})
 		return
 	}
 
@@ -183,6 +191,12 @@ func (c *wefaxChannel) handleStop() {
 	img.snr = c.inst.DrainSNR()
 	log.Printf("[%s] STOP — saving image with %d rows, SNR avg=%.1f dB (n=%d)",
 		c.label, len(img.rows), img.snr.AvgDB, img.snr.Count)
+
+	// Notify SSE clients that this channel stopped decoding.
+	c.hub.broadcast(sseEvent{
+		Event: "channel_stop",
+		Data:  map[string]interface{}{"label": c.label, "freq_hz": c.inst.freqHz},
+	})
 
 	go func() {
 		if err := saveImage(img, c.store, c.hub); err != nil {

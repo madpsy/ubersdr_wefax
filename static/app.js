@@ -116,7 +116,7 @@ function renderAudioChannelSelector() {
     opt.textContent = `${fmtFreq(ch.freq_hz)} ${ch.audio_mode.toUpperCase()}`;
     sel.appendChild(opt);
   }
-  // Always mirror the main channel selector.
+  // Mirror the main channel selector (no audio restart — just keep in sync).
   sel.value = activeLabel || '';
 }
 
@@ -132,7 +132,8 @@ function renderStatusBadges() {
     badge.dataset.label = ch.label;
     badge.textContent = `${fmtFreq(ch.freq_hz)} ${ch.decoding ? 'receiving' : ch.status}`;
     badge.title = ch.label;
-    // Click badge to switch channel filter.
+    // Click badge to switch channel filter (dispatches 'change' which also
+    // calls syncAudioToChannel via the channel-select change handler).
     badge.style.cursor = 'pointer';
     badge.addEventListener('click', () => {
       const sel = document.getElementById('channel-select');
@@ -159,9 +160,8 @@ document.getElementById('channel-select').addEventListener('change', function ()
   liveDrawingLabel = null;
   resetLiveCanvas();
   document.getElementById('live-label').textContent = 'Waiting for signal…';
-  // Sync audio preview dropdown immediately (renderAudioChannelSelector also
-  // mirrors activeLabel, so subsequent loadChannels() calls stay in sync).
-  document.getElementById('audio-channel-select').value = activeLabel || '';
+  // Sync audio preview dropdown and restart stream if playing.
+  syncAudioToChannel(activeLabel);
   resetGallery();
   loadMoreImages();
   reconnectSSE();
@@ -614,18 +614,24 @@ document.getElementById('btn-audio-play').addEventListener('click', () => {
 
 document.getElementById('btn-audio-stop').addEventListener('click', stopAudioPreview);
 
-// When the audio channel dropdown changes, restart the preview on the new
-// channel if audio is currently playing.
+// When the audio channel dropdown changes (user interaction), restart preview.
 document.getElementById('audio-channel-select').addEventListener('change', function () {
+  syncAudioToChannel(this.value);
+});
+
+// syncAudioToChannel sets the audio dropdown to label and, if audio is
+// currently playing, stops the old stream and starts the new one.
+function syncAudioToChannel(label) {
+  const sel = document.getElementById('audio-channel-select');
+  sel.value = label || '';
   if (audioPlaying) {
-    const label = this.value;
     if (label) {
       startAudioPreview(label);
     } else {
       stopAudioPreview();
     }
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Poll channel status periodically

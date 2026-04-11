@@ -103,6 +103,8 @@ async function loadChannels() {
     if (!resp.ok) return;
     channels = await resp.json();
     if (!Array.isArray(channels)) channels = [];
+    // Always display channels in ascending frequency order.
+    channels.sort((a, b) => a.freq_hz - b.freq_hz);
   } catch (e) {
     console.warn('loadChannels:', e);
     return;

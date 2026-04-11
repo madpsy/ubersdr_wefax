@@ -533,17 +533,30 @@ async function startAudioPreview(label) {
   let localCtx;
   try {
     localCtx = new (window.AudioContext || window.webkitAudioContext)();
-    audioCtx = localCtx;
   } catch (e) {
-    alert('Web Audio API not available: ' + e);
+    console.warn('Web Audio API not available:', e);
     return;
   }
+  if (!localCtx) return;
+  audioCtx = localCtx;
 
-  const resp = await fetch(BASE_PATH + '/api/audio/preview?label=' + encodeURIComponent(label));
+  let resp;
+  try {
+    resp = await fetch(BASE_PATH + '/api/audio/preview?label=' + encodeURIComponent(label));
+  } catch (e) {
+    localCtx.close();
+    if (audioCtx === localCtx) audioCtx = null;
+    return;
+  }
+  // If another startAudioPreview call replaced our context while we were
+  // waiting for the fetch, bail out silently.
+  if (audioCtx !== localCtx) {
+    localCtx.close();
+    return;
+  }
   if (!resp.ok) {
     localCtx.close();
     audioCtx = null;
-    alert('Audio preview failed: ' + resp.statusText);
     return;
   }
 

@@ -199,7 +199,10 @@ document.getElementById('channel-select').addEventListener('change', function ()
     document.getElementById('live-label').textContent = 'Waiting for signal…';
   }
 
-  // NOTE: audio selector is independent — do NOT call syncAudioToChannel here.
+  // Sync the audio preview dropdown to follow the main channel selector.
+  // (syncAudioToChannel only updates sel.value and restarts audio if playing;
+  // it does NOT cause the periodic renderAudioChannelSelector() to reset it.)
+  syncAudioToChannel(activeLabel);
   // Connect SNR stream for the selected channel (or disconnect if "all").
   connectSNR(activeLabel);
   resetGallery();

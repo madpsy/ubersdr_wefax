@@ -1,0 +1,15 @@
+# Compiled binary
+ubersdr_wefax
+
+# Output directories
+wefax-images/
+images/
+
+# Go test cache
+*.test
+*.out
+
+# Editor
+.vscode/
+.idea/
+*.swp

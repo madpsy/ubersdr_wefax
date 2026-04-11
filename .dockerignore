@@ -1,0 +1,6 @@
+.git
+.gitignore
+wefax-images/
+images/
+ubersdr_wefax
+*.test

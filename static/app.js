@@ -48,6 +48,24 @@ let audioSource = null;
 let audioReader = null;
 let audioPlaying = false;
 
+// Audio panel — spectrum / waterfall
+const audioPanel = {
+  maxDb:   -25,  // top of dB scale  (must match #ctrl-maxdb value attr)
+  range:    60,  // dB span          (must match #ctrl-range value attr)
+  // WEFAX marker frequencies (Hz) — IOC576 carrier + sidebands
+  markers: [1500, 1900, 2300],
+  fftLow:   200,
+  fftHigh: 2900,
+};
+let waterfallImg = null;   // ImageData
+let waterfallCtx = null;   // CanvasRenderingContext2D for waterfall-canvas
+let fftES = null;          // EventSource for /api/fft
+let fftLabel = '';
+
+// SNR SSE
+let snrES = null;
+let snrLabel = '';
+
 // SSE
 let sseSource = null;
 
@@ -162,6 +180,8 @@ document.getElementById('channel-select').addEventListener('change', function ()
   document.getElementById('live-label').textContent = 'Waiting for signal…';
   // Sync audio preview dropdown and restart stream if playing.
   syncAudioToChannel(activeLabel);
+  // Connect SNR stream for the selected channel (or disconnect if "all").
+  connectSNR(activeLabel);
   resetGallery();
   loadMoreImages();
   reconnectSSE();
@@ -471,6 +491,8 @@ function connectSSE() {
     if (!selectedID) {
       document.getElementById('live-panel').classList.remove('hidden');
     }
+    // When "all" is selected, follow the live channel for SNR.
+    if (!activeLabel) connectSNR(data.label);
   });
 
   sseSource.addEventListener('channel_stop', e => {
@@ -485,6 +507,8 @@ function connectSSE() {
     if (liveDrawingLabel === data.label) {
       liveDrawingLabel = null;
       document.getElementById('live-label').textContent = 'Waiting for signal…';
+      // Disconnect SNR when "all" mode loses its live channel.
+      if (!activeLabel) disconnectSNR();
     }
   });
 
@@ -562,6 +586,7 @@ async function startAudioPreview(label) {
 
   audioReader = resp.body.getReader();
   audioPlaying = true;
+  connectFFT(label);
   document.getElementById('btn-audio-play').disabled = true;
   document.getElementById('btn-audio-stop').disabled = false;
 
@@ -626,6 +651,7 @@ function stopAudioPreview() {
   }
   document.getElementById('btn-audio-play').disabled = false;
   document.getElementById('btn-audio-stop').disabled = true;
+  disconnectFFT();
 }
 
 document.getElementById('btn-audio-play').addEventListener('click', () => {
@@ -656,6 +682,252 @@ function syncAudioToChannel(label) {
 }
 
 // ---------------------------------------------------------------------------
+// Audio panel — spectrum / waterfall / VU meter
+// ---------------------------------------------------------------------------
+
+// HSV → RGB helper (h in [0,360], s/v in [0,1]) → [r,g,b] in [0,255]
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if      (h < 60)  { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else              { r = c; g = 0; b = x; }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+// Render one FFT frame onto the spectrum and waterfall canvases.
+function renderFFTFrame(frame) {
+  const bins = frame.bins;
+  const nBins = bins.length;
+
+  // ── Spectrum canvas ──────────────────────────────────────────────────────
+  const specCanvas = document.getElementById('spectrum-canvas');
+  if (specCanvas) {
+    // Lazy-init backing dimensions from CSS layout.
+    if (specCanvas.width !== specCanvas.offsetWidth && specCanvas.offsetWidth > 0) {
+      specCanvas.width  = specCanvas.offsetWidth;
+      specCanvas.height = specCanvas.offsetHeight || 80;
+    }
+    if (specCanvas.width > 0 && specCanvas.height > 0) {
+      const ctx = specCanvas.getContext('2d');
+      const w = specCanvas.width;
+      const h = specCanvas.height;
+
+      ctx.fillStyle = '#00007f';
+      ctx.fillRect(0, 0, w, h);
+
+      // Marker lines (red)
+      ctx.strokeStyle = '#e94560';
+      ctx.lineWidth = 1;
+      const span = audioPanel.fftHigh - audioPanel.fftLow;
+      for (const hz of audioPanel.markers) {
+        const x = Math.round(((hz - audioPanel.fftLow) / span) * w);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+
+      // Spectrum polyline (green)
+      ctx.strokeStyle = '#00ff00';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let j = 0; j < nBins; j++) {
+        const x = Math.round((j / (nBins - 1)) * (w - 1));
+        let t = (audioPanel.maxDb - bins[j]) / audioPanel.range;
+        if (t < 0) t = 0; if (t > 1) t = 1;
+        const y = Math.round(t * (h - 1));
+        if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // ── Waterfall canvas ─────────────────────────────────────────────────────
+  if (!waterfallCtx || !waterfallImg) {
+    const wc = document.getElementById('waterfall-canvas');
+    if (wc && wc.offsetWidth > 0 && wc.offsetHeight > 0) {
+      wc.width  = wc.offsetWidth;
+      wc.height = wc.offsetHeight;
+      waterfallCtx = wc.getContext('2d');
+      waterfallImg = waterfallCtx.createImageData(wc.width, wc.height);
+      for (let i = 0; i < waterfallImg.data.length; i += 4) {
+        waterfallImg.data[i] = 0; waterfallImg.data[i+1] = 0;
+        waterfallImg.data[i+2] = 0; waterfallImg.data[i+3] = 255;
+      }
+    }
+  }
+  if (waterfallCtx && waterfallImg) {
+    const w = waterfallImg.width;
+    const h = waterfallImg.height;
+    const rowBytes = w * 4;
+    // Scroll down by 1 row
+    waterfallImg.data.copyWithin(rowBytes, 0, (h - 1) * rowBytes);
+    // Write new top row
+    for (let j = 0; j < w; j++) {
+      const binIdx = Math.round((j / (w - 1)) * (nBins - 1));
+      let t = 1 - (audioPanel.maxDb - bins[binIdx]) / audioPanel.range;
+      if (t < 0) t = 0; if (t > 1) t = 1;
+      const hue = 240 - t * 60;
+      const [r, g, b] = hsvToRgb(hue, 1, t);
+      const idx = j * 4;
+      waterfallImg.data[idx]   = r;
+      waterfallImg.data[idx+1] = g;
+      waterfallImg.data[idx+2] = b;
+      waterfallImg.data[idx+3] = 255;
+    }
+    waterfallCtx.putImageData(waterfallImg, 0, 0);
+  }
+
+  // ── VU meter ─────────────────────────────────────────────────────────────
+  const vuBar = document.getElementById('vu-bar');
+  if (vuBar) {
+    const vdb = frame.volume_db;
+    let pct = Math.max(0, Math.min(100, (vdb + 60) / 60 * 100));
+    vuBar.style.width = pct + '%';
+    vuBar.style.backgroundColor = pct > 85 ? '#eb5757' : pct > 60 ? '#f2c94c' : '#6fcf97';
+  }
+}
+
+function drawAudioMarkers(canvas) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.offsetWidth || canvas.width;
+  canvas.width = w;
+  ctx.clearRect(0, 0, w, canvas.height);
+  const span = audioPanel.fftHigh - audioPanel.fftLow;
+  for (const hz of audioPanel.markers) {
+    const x = Math.round(((hz - audioPanel.fftLow) / span) * w);
+    ctx.fillStyle = '#555';
+    ctx.fillRect(x, 0, 1, canvas.height);
+    ctx.fillStyle = '#888';
+    ctx.font = '6px monospace';
+    ctx.fillText((hz / 1000).toFixed(1) + 'k', x + 2, canvas.height - 1);
+  }
+}
+
+function initAudioPanel() {
+  const spectrumCanvas  = document.getElementById('spectrum-canvas');
+  const waterfallCanvas = document.getElementById('waterfall-canvas');
+  const markerSpectrum  = document.getElementById('marker-spectrum');
+  const markerWaterfall = document.getElementById('marker-waterfall');
+  const ctrlMaxDb = document.getElementById('ctrl-maxdb');
+  const ctrlRange = document.getElementById('ctrl-range');
+
+  if (ctrlMaxDb) {
+    audioPanel.maxDb = parseFloat(ctrlMaxDb.value) || audioPanel.maxDb;
+    ctrlMaxDb.addEventListener('input', () => { audioPanel.maxDb = parseFloat(ctrlMaxDb.value) || -25; });
+  }
+  if (ctrlRange) {
+    audioPanel.range = parseFloat(ctrlRange.value) || audioPanel.range;
+    ctrlRange.addEventListener('input', () => { audioPanel.range = parseFloat(ctrlRange.value) || 60; });
+  }
+
+  if (!spectrumCanvas || !waterfallCanvas) return;
+
+  const ro = new ResizeObserver(() => {
+    const w  = spectrumCanvas.offsetWidth;
+    const sh = spectrumCanvas.offsetHeight;
+    const wh = waterfallCanvas.offsetHeight;
+    if (w <= 0 || sh <= 0 || wh <= 0) return;
+    if (spectrumCanvas.width !== w || spectrumCanvas.height !== sh) {
+      spectrumCanvas.width  = w;
+      spectrumCanvas.height = sh;
+    }
+    if (waterfallCanvas.width !== w || waterfallCanvas.height !== wh) {
+      waterfallCanvas.width  = w;
+      waterfallCanvas.height = wh;
+      waterfallCtx = waterfallCanvas.getContext('2d');
+      waterfallImg = waterfallCtx.createImageData(w, wh);
+      for (let i = 0; i < waterfallImg.data.length; i += 4) {
+        waterfallImg.data[i] = 0; waterfallImg.data[i+1] = 0;
+        waterfallImg.data[i+2] = 0; waterfallImg.data[i+3] = 255;
+      }
+    }
+    drawAudioMarkers(markerSpectrum);
+    drawAudioMarkers(markerWaterfall);
+  });
+  ro.observe(spectrumCanvas);
+  ro.observe(waterfallCanvas);
+
+  requestAnimationFrame(() => {
+    drawAudioMarkers(markerSpectrum);
+    drawAudioMarkers(markerWaterfall);
+  });
+}
+
+function connectFFT(label) {
+  if (fftES) { fftES.close(); fftES = null; }
+  if (!label) return;
+  fftLabel = label;
+  const url = BASE_PATH + '/api/fft?label=' + encodeURIComponent(label);
+  fftES = new EventSource(url);
+  fftES.addEventListener('fft', e => {
+    try { renderFFTFrame(JSON.parse(e.data)); }
+    catch (err) { console.error('FFT parse error', err); }
+  });
+  fftES.onerror = () => {
+    fftES.close(); fftES = null;
+    // Reconnect after 5 s only if still playing.
+    if (audioPlaying) setTimeout(() => connectFFT(fftLabel), 5000);
+  };
+}
+
+function disconnectFFT() {
+  if (fftES) { fftES.close(); fftES = null; }
+}
+
+// ---------------------------------------------------------------------------
+// SNR display — always active for the selected channel
+// ---------------------------------------------------------------------------
+
+function updateSNRDisplay(stats) {
+  const valueEl = document.getElementById('snr-value');
+  const barEl   = document.getElementById('snr-bar');
+  if (!valueEl || !barEl) return;
+
+  if (!stats || stats.count === 0) {
+    valueEl.textContent = '—';
+    barEl.style.width = '0%';
+    barEl.style.backgroundColor = '#6fcf97';
+    return;
+  }
+
+  const snr = stats.avg_db;
+  valueEl.textContent = snr.toFixed(1) + ' dB';
+
+  // Map SNR to bar: 0 dB → 0%, 40 dB → 100%
+  const pct = Math.max(0, Math.min(100, (snr / 40) * 100));
+  barEl.style.width = pct + '%';
+  // Colour: red < 10 dB, yellow 10–20 dB, green > 20 dB
+  barEl.style.backgroundColor = snr < 10 ? '#eb5757' : snr < 20 ? '#f2c94c' : '#6fcf97';
+}
+
+function connectSNR(label) {
+  if (snrES) { snrES.close(); snrES = null; }
+  // Reset display when no channel selected.
+  if (!label) { updateSNRDisplay(null); return; }
+  snrLabel = label;
+  const url = BASE_PATH + '/api/snr?label=' + encodeURIComponent(label);
+  snrES = new EventSource(url);
+  snrES.addEventListener('snr', e => {
+    try { updateSNRDisplay(JSON.parse(e.data)); }
+    catch (err) { console.error('SNR parse error', err); }
+  });
+  snrES.onerror = () => {
+    snrES.close(); snrES = null;
+    setTimeout(() => { if (snrLabel) connectSNR(snrLabel); }, 5000);
+  };
+}
+
+function disconnectSNR() {
+  if (snrES) { snrES.close(); snrES = null; }
+  updateSNRDisplay(null);
+}
+
+// ---------------------------------------------------------------------------
 // Poll channel status periodically
 // ---------------------------------------------------------------------------
 
@@ -668,7 +940,10 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 
 (async function init() {
+  initAudioPanel();
   await loadChannels();
   await loadMoreImages();
   connectSSE();
+  // Connect SNR for the initially selected channel (if any).
+  if (activeLabel) connectSNR(activeLabel);
 })();

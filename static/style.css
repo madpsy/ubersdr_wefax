@@ -284,7 +284,7 @@ select:focus { outline: 2px solid var(--accent); }
   display: flex;
   flex-direction: column;
   padding: 12px;
-  gap: 10px;
+  gap: 8px;
   overflow-y: auto;
 }
 
@@ -300,8 +300,104 @@ select:focus { outline: 2px solid var(--accent); }
 
 #audio-controls { display: flex; gap: 6px; }
 
-#vu-wrap { background: #111; border-radius: 4px; overflow: hidden; }
-#vu-canvas { display: block; width: 100%; }
+/* SNR display */
+#snr-display {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#snr-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.snr-label { color: var(--text-dim); }
+#snr-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+#snr-bar-wrap {
+  height: 6px;
+  background: #111;
+  border-radius: 3px;
+  overflow: hidden;
+}
+#snr-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--success);
+  border-radius: 3px;
+  transition: width 0.4s ease, background-color 0.4s;
+}
+
+/* Spectrum / waterfall */
+#marker-spectrum,
+#marker-waterfall {
+  display: block;
+  width: 100%;
+  height: 8px;
+  background: #111;
+}
+
+#spectrum-canvas {
+  display: block;
+  width: 100%;
+  height: 80px;
+  background: #00007f;
+  border-radius: 2px;
+}
+
+#waterfall-canvas {
+  display: block;
+  width: 100%;
+  height: 160px;
+  background: #000;
+  border-radius: 2px;
+}
+
+/* VU meter */
+#vu-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#vu-label { font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+#vu-track {
+  flex: 1;
+  height: 8px;
+  background: #111;
+  border-radius: 4px;
+  overflow: hidden;
+}
+#vu-bar {
+  height: 100%;
+  width: 0%;
+  background: #6fcf97;
+  border-radius: 4px;
+  transition: width 0.05s linear, background-color 0.1s;
+}
+
+/* Display controls */
+#audio-panel-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#audio-panel-controls label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+#audio-panel-controls input[type="number"] {
+  width: 60px;
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+  text-align: right;
+}
 
 /* ── Buttons ── */
 

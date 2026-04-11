@@ -193,6 +193,10 @@ func NewWEFAXDecoder(sampleRate int, config WEFAXConfig) *WEFAXDecoder {
 		usePhasing:               config.UsePhasing,
 		autoStop:                 config.AutoStop,
 		autoStart:                config.AutoStart,
+		// Start as if already triggered so lines flow immediately.
+		// A STOP tone will reset this to false; a subsequent START tone
+		// will set it back to true — preserving normal image boundaries.
+		autoStarted:              config.AutoStart,
 		samplesPerSecNom:         float64(sampleRate),
 		samplesPerSecFrac:        float64(sampleRate),
 		samplesPerSecFracPrev:    float64(sampleRate),

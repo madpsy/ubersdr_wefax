@@ -83,8 +83,46 @@
         <button id="btn-audio-play">▶ Play</button>
         <button id="btn-audio-stop" disabled>■ Stop</button>
       </div>
+
+      <!-- SNR display (always shown when a channel is selected) -->
+      <div id="snr-display">
+        <div id="snr-row">
+          <span class="snr-label">SNR</span>
+          <span id="snr-value">—</span>
+        </div>
+        <div id="snr-bar-wrap">
+          <div id="snr-bar"></div>
+        </div>
+      </div>
+
+      <!-- Frequency marker ticks above spectrum -->
+      <canvas id="marker-spectrum" width="200" height="8"></canvas>
+
+      <!-- FFT spectrum display -->
+      <canvas id="spectrum-canvas" width="200" height="80"></canvas>
+
+      <!-- Frequency marker ticks above waterfall -->
+      <canvas id="marker-waterfall" width="200" height="8"></canvas>
+
+      <!-- Scrolling waterfall -->
+      <canvas id="waterfall-canvas" width="200" height="160"></canvas>
+
+      <!-- VU meter -->
       <div id="vu-wrap">
-        <canvas id="vu-canvas" width="200" height="40"></canvas>
+        <div id="vu-label">VOL</div>
+        <div id="vu-track">
+          <div id="vu-bar"></div>
+        </div>
+      </div>
+
+      <!-- Display controls -->
+      <div id="audio-panel-controls">
+        <label title="Top of dB scale">Max dB
+          <input id="ctrl-maxdb" type="number" min="-40" max="10" value="-25" step="1">
+        </label>
+        <label title="dB range shown">Range
+          <input id="ctrl-range" type="number" min="10" max="100" value="60" step="1">
+        </label>
       </div>
     </div>
   </div>

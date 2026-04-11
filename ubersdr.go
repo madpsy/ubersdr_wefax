@@ -175,6 +175,55 @@ func (a *snrAccumulator) peek() SNRStats {
 }
 
 // ---------------------------------------------------------------------------
+// fftBroadcastHub — fan-out of FFT magnitude frames to SSE listeners
+// ---------------------------------------------------------------------------
+
+type fftBroadcastHub struct {
+	mu      sync.Mutex
+	clients map[chan []byte]struct{}
+}
+
+func newFFTBroadcastHub() *fftBroadcastHub {
+	return &fftBroadcastHub{clients: make(map[chan []byte]struct{})}
+}
+
+func (h *fftBroadcastHub) subscribe() chan []byte {
+	ch := make(chan []byte, 8)
+	h.mu.Lock()
+	h.clients[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *fftBroadcastHub) unsubscribe(ch chan []byte) {
+	h.mu.Lock()
+	delete(h.clients, ch)
+	h.mu.Unlock()
+	close(ch)
+}
+
+func (h *fftBroadcastHub) broadcast(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.clients {
+		select {
+		case ch <- data:
+		default:
+			// Subscriber too slow — drop frame.
+		}
+	}
+}
+
+func (h *fftBroadcastHub) hasListeners() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.clients) > 0
+}
+
+// ---------------------------------------------------------------------------
 // audioBroadcastHub — fan-out of raw PCM chunks to preview listeners
 // ---------------------------------------------------------------------------
 
@@ -274,6 +323,7 @@ type instance struct {
 	sessionID  string
 
 	audioHub *audioBroadcastHub
+	fftHub   *fftBroadcastHub
 	snrAccum *snrAccumulator
 
 	mu            sync.Mutex
@@ -308,6 +358,7 @@ func newInstance(freqHz, carrierHz int, audioMode, ubersdrURL, password string) 
 		password:   password,
 		sessionID:  uuid.New().String(),
 		audioHub:   newAudioBroadcastHub(),
+		fftHub:     newFFTBroadcastHub(),
 		snrAccum:   &snrAccumulator{},
 		status:     "stopped",
 		AudioCh:    make(chan []byte, 256),
@@ -463,6 +514,7 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 	var totalPackets atomic.Int64
 
 	firstPacket := true
+	var instFFT *audioFFT // lazily created once sample rate is known
 
 	inst.mu.Lock()
 	inst.status = "running"
@@ -534,6 +586,18 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 			// Tee to audio preview listeners
 			if inst.audioHub.hasListeners() {
 				inst.audioHub.broadcast(pcmData)
+			}
+
+			// Compute FFT and broadcast magnitude frames to spectrum listeners.
+			if inst.fftHub.hasListeners() {
+				if instFFT == nil {
+					instFFT = newAudioFFT(pkt.sampleRate)
+				}
+				if frame := instFFT.push(pcmData); frame != nil {
+					if data, err := json.Marshal(frame); err == nil {
+						inst.fftHub.broadcast(data)
+					}
+				}
 			}
 
 		case websocket.TextMessage:

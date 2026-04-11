@@ -289,6 +289,61 @@ func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*we
 	})
 
 	// -----------------------------------------------------------------------
+	// GET /api/fft?label= — SSE stream of FFT magnitude frames for the audio panel
+	// -----------------------------------------------------------------------
+	mux.HandleFunc("/api/fft", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		label := r.URL.Query().Get("label")
+		var inst *instance
+		for _, ch := range channels {
+			if ch.label == label {
+				inst = ch.inst
+				break
+			}
+		}
+		if inst == nil {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+
+		fftCh := inst.fftHub.subscribe()
+		defer inst.fftHub.unsubscribe(fftCh)
+
+		fmt.Fprint(w, ": connected\n\n")
+		flusher.Flush()
+
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case data, ok := <-fftCh:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "event: fft\ndata: %s\n\n", data)
+				flusher.Flush()
+			case <-ticker.C:
+				fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+			}
+		}
+	})
+
+	// -----------------------------------------------------------------------
 	// GET /api/audio/preview?label= — streaming WAV audio preview
 	// -----------------------------------------------------------------------
 	mux.HandleFunc("/api/audio/preview", func(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +390,56 @@ func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*we
 				if flusher != nil {
 					flusher.Flush()
 				}
+			}
+		}
+	})
+
+	// -----------------------------------------------------------------------
+	// GET /api/snr?label= — SSE stream of SNR stats (every 500 ms, always active)
+	// -----------------------------------------------------------------------
+	mux.HandleFunc("/api/snr", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		label := r.URL.Query().Get("label")
+		var inst *instance
+		for _, ch := range channels {
+			if ch.label == label {
+				inst = ch.inst
+				break
+			}
+		}
+		if inst == nil {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, ": connected\n\n")
+		flusher.Flush()
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				stats := inst.snrAccum.peek()
+				data, err := json.Marshal(stats)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "event: snr\ndata: %s\n\n", data)
+				flusher.Flush()
 			}
 		}
 	})

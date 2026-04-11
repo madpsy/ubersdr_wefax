@@ -744,19 +744,16 @@ document.getElementById('audio-channel-select').addEventListener('change', funct
   }
 });
 
-// syncAudioToChannel is called from the main channel-select change handler
-// to keep the audio dropdown in sync.  It only updates the dropdown value
-// and restarts the stream if audio is already playing — it does NOT
-// auto-start audio just because the gallery filter changed.
+// syncAudioToChannel is called from any channel-selection method (main
+// channel-select dropdown, badge clicks) to keep the audio dropdown in sync
+// and auto-start the muted audio stream for the selected channel.
 function syncAudioToChannel(label) {
   const sel = document.getElementById('audio-channel-select');
   sel.value = label || '';
-  if (audioPlaying) {
-    if (label) {
-      startAudioPreview(label);
-    } else {
-      stopAudioPreview();
-    }
+  if (label) {
+    startAudioPreview(label);
+  } else {
+    stopAudioPreview();
   }
 }
 

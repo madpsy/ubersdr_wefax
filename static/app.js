@@ -528,8 +528,12 @@ async function startAudioPreview(label) {
   stopAudioPreview();
   if (!label) return;
 
+  // Create a local context so the pump() closure below is not affected by
+  // a subsequent stopAudioPreview() nulling the module-level audioCtx.
+  let localCtx;
   try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    localCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx = localCtx;
   } catch (e) {
     alert('Web Audio API not available: ' + e);
     return;
@@ -537,6 +541,8 @@ async function startAudioPreview(label) {
 
   const resp = await fetch(BASE_PATH + '/api/audio/preview?label=' + encodeURIComponent(label));
   if (!resp.ok) {
+    localCtx.close();
+    audioCtx = null;
     alert('Audio preview failed: ' + resp.statusText);
     return;
   }
@@ -548,7 +554,7 @@ async function startAudioPreview(label) {
 
   // WAV header is 44 bytes; skip it.
   let headerSkip = 44;
-  let scheduledUntil = audioCtx.currentTime;
+  let scheduledUntil = localCtx.currentTime;
 
   async function pump() {
     while (audioPlaying) {
@@ -559,6 +565,8 @@ async function startAudioPreview(label) {
         break;
       }
       if (result.done) break;
+      // Stop if our context was replaced by a newer call.
+      if (audioCtx !== localCtx) break;
       let chunk = result.value;
 
       if (headerSkip > 0) {
@@ -572,21 +580,22 @@ async function startAudioPreview(label) {
 
       // chunk is S16LE PCM; convert to float32.
       const samples = chunk.length / 2;
-      const buf = audioCtx.createBuffer(1, samples, 8000);
+      const buf = localCtx.createBuffer(1, samples, 8000);
       const ch = buf.getChannelData(0);
       const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
       for (let i = 0; i < samples; i++) {
         ch[i] = view.getInt16(i * 2, true) / 32768;
       }
 
-      const src = audioCtx.createBufferSource();
+      const src = localCtx.createBufferSource();
       src.buffer = buf;
-      src.connect(audioCtx.destination);
-      const startAt = Math.max(scheduledUntil, audioCtx.currentTime + 0.05);
+      src.connect(localCtx.destination);
+      const startAt = Math.max(scheduledUntil, localCtx.currentTime + 0.05);
       src.start(startAt);
       scheduledUntil = startAt + buf.duration;
     }
-    stopAudioPreview();
+    // Only call stopAudioPreview if we are still the active context.
+    if (audioCtx === localCtx) stopAudioPreview();
   }
 
   pump();

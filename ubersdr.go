@@ -264,7 +264,8 @@ func (h *audioBroadcastHub) hasListeners() bool {
 // ---------------------------------------------------------------------------
 
 type instance struct {
-	freqHz    int
+	freqHz    int    // published/carrier frequency (used for labels and metadata)
+	carrierHz int    // WEFAX carrier offset; dial freq sent to UberSDR = freqHz - carrierHz
 	audioMode string
 	label     string // e.g. "14230000_usb"
 
@@ -293,10 +294,14 @@ type instance struct {
 	AudioCh chan []byte
 }
 
-func newInstance(freqHz int, audioMode, ubersdrURL, password string) *instance {
+func newInstance(freqHz, carrierHz int, audioMode, ubersdrURL, password string) *instance {
 	label := fmt.Sprintf("%d_%s", freqHz, audioMode)
+	dialHz := freqHz - carrierHz
+	log.Printf("[%s] published freq %d Hz, carrier offset %d Hz → dial freq %d Hz (%s)",
+		label, freqHz, carrierHz, dialHz, audioMode)
 	return &instance{
 		freqHz:     freqHz,
+		carrierHz:  carrierHz,
 		audioMode:  audioMode,
 		label:      label,
 		ubersdrURL: ubersdrURL,
@@ -341,8 +346,12 @@ func (inst *instance) wsURL() string {
 	if path == "" {
 		path = "/ws"
 	}
+	// Subtract the carrier offset so the WEFAX carrier (default 1900 Hz) falls
+	// within the USB passband.  inst.freqHz is the published/carrier frequency
+	// and is kept as-is for labels and metadata.
+	dialHz := inst.freqHz - inst.carrierHz
 	q := url.Values{}
-	q.Set("frequency", fmt.Sprintf("%d", inst.freqHz))
+	q.Set("frequency", fmt.Sprintf("%d", dialHz))
 	q.Set("mode", inst.audioMode)
 	q.Set("format", "pcm-zstd")
 	q.Set("version", "2")

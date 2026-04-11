@@ -86,7 +86,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("[main] invalid -channel %q: %v", spec, err)
 		}
-		inst := newInstance(freqHz, mode, *ubersdrURL, *password)
+		inst := newInstance(freqHz, int(cfg.Carrier), mode, *ubersdrURL, *password)
 		ch := newWefaxChannel(inst, cfg, store, hub)
 		wefaxChannels = append(wefaxChannels, ch)
 		log.Printf("[main] starting channel %s (%d Hz, %s)", inst.label, freqHz, mode)

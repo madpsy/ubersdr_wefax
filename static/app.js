@@ -159,6 +159,13 @@ document.getElementById('channel-select').addEventListener('change', function ()
   liveDrawingLabel = null;
   resetLiveCanvas();
   document.getElementById('live-label').textContent = 'Waiting for signal…';
+  // Sync audio preview dropdown to the same channel.
+  const audioSel = document.getElementById('audio-channel-select');
+  if (activeLabel) {
+    audioSel.value = activeLabel;
+  } else {
+    audioSel.value = '';
+  }
   resetGallery();
   loadMoreImages();
   reconnectSSE();

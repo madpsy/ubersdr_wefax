@@ -109,7 +109,6 @@ function renderChannelSelector() {
 
 function renderAudioChannelSelector() {
   const sel = document.getElementById('audio-channel-select');
-  const prev = sel.value;
   while (sel.options.length > 1) sel.remove(1);
   for (const ch of channels) {
     const opt = document.createElement('option');
@@ -117,7 +116,8 @@ function renderAudioChannelSelector() {
     opt.textContent = `${fmtFreq(ch.freq_hz)} ${ch.audio_mode.toUpperCase()}`;
     sel.appendChild(opt);
   }
-  if (prev) sel.value = prev;
+  // Always mirror the main channel selector.
+  sel.value = activeLabel || '';
 }
 
 function renderStatusBadges() {
@@ -159,13 +159,9 @@ document.getElementById('channel-select').addEventListener('change', function ()
   liveDrawingLabel = null;
   resetLiveCanvas();
   document.getElementById('live-label').textContent = 'Waiting for signal…';
-  // Sync audio preview dropdown to the same channel.
-  const audioSel = document.getElementById('audio-channel-select');
-  if (activeLabel) {
-    audioSel.value = activeLabel;
-  } else {
-    audioSel.value = '';
-  }
+  // Sync audio preview dropdown immediately (renderAudioChannelSelector also
+  // mirrors activeLabel, so subsequent loadChannels() calls stay in sync).
+  document.getElementById('audio-channel-select').value = activeLabel || '';
   resetGallery();
   loadMoreImages();
   reconnectSSE();

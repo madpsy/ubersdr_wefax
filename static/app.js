@@ -10,6 +10,10 @@
 
 'use strict';
 
+// Base path injected by the server (empty string when accessed directly,
+// e.g. "/addon/wefax" when behind the ka9q_ubersdr addon proxy).
+const BASE_PATH = (typeof window.BASE_PATH === 'string') ? window.BASE_PATH : '';
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -71,7 +75,7 @@ function fmtDuration(startIso, endIso) {
 
 async function loadChannels() {
   try {
-    const resp = await fetch('/api/channels');
+    const resp = await fetch(BASE_PATH + '/api/channels');
     if (!resp.ok) return;
     channels = await resp.json();
     if (!Array.isArray(channels)) channels = [];
@@ -147,7 +151,7 @@ async function loadMoreImages() {
   const params = new URLSearchParams({ limit: GALLERY_PAGE, offset: galleryOffset });
   if (activeLabel) params.set('label', activeLabel);
   try {
-    const resp = await fetch('/api/images?' + params);
+    const resp = await fetch(BASE_PATH + '/api/images?' + params);
     if (!resp.ok) return;
     const data = await resp.json();
     const imgs = data.images || [];
@@ -187,8 +191,8 @@ function buildThumbCard(rec) {
   card.dataset.id = rec.id;
 
   const imgSrc = rec.thumb_file
-    ? '/images/' + rec.thumb_file
-    : '/images/' + rec.filename;
+    ? BASE_PATH + '/images/' + rec.thumb_file
+    : BASE_PATH + '/images/' + rec.filename;
 
   card.innerHTML = `
     <div class="thumb-img-wrap">
@@ -225,7 +229,7 @@ function selectRecord(id) {
   const dv = document.getElementById('detail-view');
   dv.classList.remove('hidden');
 
-  document.getElementById('detail-img').src = '/images/' + rec.filename;
+  document.getElementById('detail-img').src = BASE_PATH + '/images/' + rec.filename;
 
   const table = document.getElementById('detail-meta-table');
   const snr = rec.snr || {};
@@ -279,7 +283,7 @@ document.getElementById('btn-delete').addEventListener('click', async () => {
   if (!selectedID) return;
   if (!confirm('Delete this image?')) return;
   try {
-    const resp = await fetch('/api/images/' + selectedID, { method: 'DELETE' });
+    const resp = await fetch(BASE_PATH + '/api/images/' + selectedID, { method: 'DELETE' });
     if (!resp.ok) { alert('Delete failed'); return; }
     removeRecordLocally(selectedID);
     closeDetail();
@@ -386,8 +390,8 @@ function reconnectSSE() {
 
 function connectSSE() {
   const url = activeLabel
-    ? '/api/live?label=' + encodeURIComponent(activeLabel)
-    : '/api/live';
+    ? BASE_PATH + '/api/live?label=' + encodeURIComponent(activeLabel)
+    : BASE_PATH + '/api/live';
 
   sseSource = new EventSource(url);
 
@@ -470,7 +474,7 @@ async function startAudioPreview(label) {
     return;
   }
 
-  const resp = await fetch('/api/audio/preview?label=' + encodeURIComponent(label));
+  const resp = await fetch(BASE_PATH + '/api/audio/preview?label=' + encodeURIComponent(label));
   if (!resp.ok) {
     alert('Audio preview failed: ' + resp.statusText);
     return;

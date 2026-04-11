@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ubersdr_wefax</title>
-  <link rel="stylesheet" href="style.css" />
+  <script>window.BASE_PATH = "{{.BasePath}}";</script>
+  <link rel="stylesheet" href="{{.BasePath}}/static/style.css" />
 </head>
 <body>
   <header>
@@ -96,6 +97,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="{{.BasePath}}/static/app.js"></script>
 </body>
 </html>

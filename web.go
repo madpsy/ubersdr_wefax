@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
@@ -133,12 +134,45 @@ func putU16LE(b []byte, v uint16) {
 func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*wefaxChannel) error {
 	mux := http.NewServeMux()
 
-	// Static files — strip the "static/" prefix from the embed.
+	// index.html is served as a Go template so BASE_PATH can be injected.
+	indexTmpl, indexTmplErr := func() (*template.Template, error) {
+		data, err := staticFiles.ReadFile("static/index.html")
+		if err != nil {
+			return nil, err
+		}
+		return template.New("index").Parse(string(data))
+	}()
+
+	// Static files sub-FS (everything except index.html, which is templated).
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		return fmt.Errorf("embed sub: %w", err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+
+	// basePath derives the proxy prefix from X-Forwarded-Prefix (set by the
+	// addon proxy when strip_prefix is enabled).  Falls back to "" for direct
+	// access.
+	basePath := func(r *http.Request) string {
+		return strings.TrimRight(r.Header.Get("X-Forwarded-Prefix"), "/")
+	}
+
+	// Root → index.html (templated).
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			http.NotFound(w, r)
+			return
+		}
+		if indexTmplErr != nil {
+			http.Error(w, "template error: "+indexTmplErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		bp := basePath(r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		indexTmpl.Execute(w, map[string]string{"BasePath": bp}) //nolint:errcheck
+	})
+
+	// Static assets served under /static/.
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	// Serve saved images and thumbnails.
 	mux.Handle("/images/", http.StripPrefix("/images/", http.FileServer(http.Dir(store.outputDir))))

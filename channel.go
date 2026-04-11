@@ -39,6 +39,7 @@ type inProgressImage struct {
 	audioMode string
 	label     string
 	snr       SNRStats  // drained from instance at STOP time
+	startSeen bool      // true only when a real START tone opened this image
 }
 
 func newWefaxChannel(inst *instance, cfg WEFAXConfig, store *imageStore, hub *sseHub) *wefaxChannel {
@@ -185,6 +186,7 @@ func (c *wefaxChannel) handleStart() {
 		freqHz:    c.inst.freqHz,
 		audioMode: c.inst.audioMode,
 		label:     c.label,
+		startSeen: true, // real START tone — image is eligible to be saved
 	}
 	c.decoding = true
 	log.Printf("[%s] START — new image begun", c.label)
@@ -203,13 +205,25 @@ func (c *wefaxChannel) handleStop() {
 	c.decoding = false
 	c.mu.Unlock()
 
+	// Always emit channel_stop so the frontend badge updates.
+	c.hub.broadcast(sseEvent{
+		Event: "channel_stop",
+		Data:  map[string]interface{}{"label": c.label, "freq_hz": c.inst.freqHz},
+	})
+
 	if img == nil {
 		log.Printf("[%s] STOP received but no image in progress", c.label)
-		// Still emit channel_stop so the frontend badge updates.
-		c.hub.broadcast(sseEvent{
-			Event: "channel_stop",
-			Data:  map[string]interface{}{"label": c.label, "freq_hz": c.inst.freqHz},
-		})
+		return
+	}
+
+	if !img.startSeen {
+		// No real START tone was ever received for this image — discard it.
+		// (Lines were flowing from startup but the image boundary was never
+		// established, so saving would produce a partial/garbage image.)
+		log.Printf("[%s] STOP received but no START was seen — discarding %d rows", c.label, len(img.rows))
+		// Open a fresh silent buffer so lines continue to be captured until
+		// the next real START tone arrives.
+		c.openImageSilently()
 		return
 	}
 
@@ -217,12 +231,6 @@ func (c *wefaxChannel) handleStop() {
 	img.snr = c.inst.DrainSNR()
 	log.Printf("[%s] STOP — saving image with %d rows, SNR avg=%.1f dB (n=%d)",
 		c.label, len(img.rows), img.snr.AvgDB, img.snr.Count)
-
-	// Notify SSE clients that this channel stopped decoding.
-	c.hub.broadcast(sseEvent{
-		Event: "channel_stop",
-		Data:  map[string]interface{}{"label": c.label, "freq_hz": c.inst.freqHz},
-	})
 
 	go func() {
 		if err := saveImage(img, c.store, c.hub); err != nil {

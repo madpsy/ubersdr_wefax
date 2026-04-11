@@ -6,8 +6,20 @@ services:
     environment:
       # UberSDR WebSocket URL
       UBERSDR_URL: "ws://ubersdr:8080/ws"
-      # Comma-separated freq:mode pairs, e.g. 7880000:usb,13882500:usb,4610000:usb
-      UBERSDR_CHANNELS: "7880000:usb"
+      #
+      # Comma-separated freq:mode pairs.
+      # Common HF wefax frequencies by station (all USB):
+      #
+      #   NOAA (USA)         : 4317900, 8503900, 12788500, 17151200
+      #   DWD (Germany)      : 3855000, 7880000, 13882500
+      #   JMH (Japan)        : 3622500, 7795000, 13988500, 22527000
+      #   GYA (UK/Northwood) : 2618500, 4610000, 11086500
+      #   FFU/FUG (France)   : 3855000, 7710000, 13155000
+      #   BMF (Taiwan)       : 4616000, 8140000, 12230000
+      #
+      # Edit to match the frequencies receivable at your location.
+      UBERSDR_CHANNELS: "4317900:usb,8503900:usb,12788500:usb,7880000:usb,13882500:usb,4610000:usb,11086500:usb"
+      #
       # Uncomment and set as needed:
       # UBERSDR_PASS: ""
       # OUTPUT_DIR: "/data"

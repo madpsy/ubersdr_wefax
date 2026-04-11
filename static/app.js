@@ -47,6 +47,7 @@ let audioCtx = null;
 let audioSource = null;
 let audioReader = null;
 let audioPlaying = false;
+let audioMuted = true;   // start muted; user clicks the mute button to hear audio
 
 // Audio panel — spectrum / waterfall
 const audioPanel = {
@@ -611,6 +612,9 @@ async function startAudioPreview(label) {
   if (!localCtx) return;
   audioCtx = localCtx;
 
+  // Start muted by default — the stream and FFT still flow, but no sound.
+  if (audioMuted) localCtx.suspend();
+
   let resp;
   try {
     resp = await fetch(BASE_PATH + '/api/audio/preview?label=' + encodeURIComponent(label));
@@ -634,8 +638,7 @@ async function startAudioPreview(label) {
   audioReader = resp.body.getReader();
   audioPlaying = true;
   connectFFT(label);
-  document.getElementById('btn-audio-play').disabled = true;
-  document.getElementById('btn-audio-stop').disabled = false;
+  updateMuteBtn();
 
   // WAV header is 44 bytes; skip it.
   let headerSkip = 44;
@@ -696,26 +699,55 @@ function stopAudioPreview() {
     audioCtx.close();
     audioCtx = null;
   }
-  document.getElementById('btn-audio-play').disabled = false;
-  document.getElementById('btn-audio-stop').disabled = true;
+  updateMuteBtn();
   disconnectFFT();
 }
 
-document.getElementById('btn-audio-play').addEventListener('click', () => {
-  const label = document.getElementById('audio-channel-select').value;
-  if (!label) { alert('Select a channel first'); return; }
-  startAudioPreview(label);
+// updateMuteBtn keeps the mute button label and disabled state in sync.
+function updateMuteBtn() {
+  const btn = document.getElementById('btn-audio-mute');
+  if (!btn) return;
+  if (!audioPlaying) {
+    btn.disabled = true;
+    btn.textContent = '🔇 Muted';
+    btn.title = 'No channel selected';
+    return;
+  }
+  btn.disabled = false;
+  if (audioMuted) {
+    btn.textContent = '🔇 Muted';
+    btn.title = 'Click to unmute audio';
+  } else {
+    btn.textContent = '🔊 Unmute';
+    btn.title = 'Click to mute audio';
+  }
+}
+
+document.getElementById('btn-audio-mute').addEventListener('click', () => {
+  if (!audioCtx) return;
+  audioMuted = !audioMuted;
+  if (audioMuted) {
+    audioCtx.suspend();
+  } else {
+    audioCtx.resume();
+  }
+  updateMuteBtn();
 });
 
-document.getElementById('btn-audio-stop').addEventListener('click', stopAudioPreview);
-
-// When the audio channel dropdown changes (user interaction), restart preview.
+// When the audio channel dropdown changes (user interaction), auto-start.
 document.getElementById('audio-channel-select').addEventListener('change', function () {
-  syncAudioToChannel(this.value);
+  // User explicitly picked a channel in the audio dropdown — auto-start.
+  if (this.value) {
+    startAudioPreview(this.value);
+  } else {
+    stopAudioPreview();
+  }
 });
 
-// syncAudioToChannel sets the audio dropdown to label and, if audio is
-// currently playing, stops the old stream and starts the new one.
+// syncAudioToChannel is called from the main channel-select change handler
+// to keep the audio dropdown in sync.  It only updates the dropdown value
+// and restarts the stream if audio is already playing — it does NOT
+// auto-start audio just because the gallery filter changed.
 function syncAudioToChannel(label) {
   const sel = document.getElementById('audio-channel-select');
   sel.value = label || '';

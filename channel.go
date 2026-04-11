@@ -93,8 +93,9 @@ func (c *wefaxChannel) run(ctx context.Context, cfg WEFAXConfig) {
 	// When a real START tone is detected, handleStart() will discard the
 	// partial and begin a fresh image; a STOP tone saves the image and resets
 	// the decoder to wait for the next START — preserving normal boundaries.
+	// Use silent=true so the frontend badge doesn't flash blue at startup.
 	log.Printf("[%s] opening image immediately (lines flow from first packet)", c.label)
-	c.handleStart()
+	c.openImageSilently()
 
 	// Start the image assembler goroutine.
 	go c.assembleImages(ctx)
@@ -146,7 +147,7 @@ func (c *wefaxChannel) assembleImages(ctx context.Context) {
 			}
 			switch msg[0] {
 			case MsgStart:
-				c.handleStart()
+				c.handleStart() // real START tone — notify frontend
 			case MsgStop:
 				c.handleStop()
 			case MsgImageLine:
@@ -154,6 +155,22 @@ func (c *wefaxChannel) assembleImages(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// openImageSilently opens a new in-progress image without broadcasting a
+// channel_start SSE event.  Used at startup so badges don't flash blue
+// before any real signal has been detected.
+func (c *wefaxChannel) openImageSilently() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.currentImg = &inProgressImage{
+		startedAt: time.Now(),
+		freqHz:    c.inst.freqHz,
+		audioMode: c.inst.audioMode,
+		label:     c.label,
+	}
+	// Do NOT set c.decoding = true here — the badge should only go blue
+	// when a real START tone is detected.
 }
 
 func (c *wefaxChannel) handleStart() {

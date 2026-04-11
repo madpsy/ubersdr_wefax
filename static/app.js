@@ -187,6 +187,8 @@ document.getElementById('channel-select').addEventListener('change', function ()
       liveDrawingLabel = activeLabel;
       document.getElementById('live-label').textContent =
         `Live: ${fmtFreq(ch.freq_hz)} — ${ch.label}`;
+      // Replay buffered rows so the user sees the image so far.
+      replayLiveCanvas(activeLabel);
     } else {
       liveDrawingLabel = null;
       document.getElementById('live-label').textContent = 'Waiting for signal…';
@@ -204,6 +206,30 @@ document.getElementById('channel-select').addEventListener('change', function ()
   loadMoreImages();
   reconnectSSE();
 });
+
+// Fetch buffered rows from the server for a mid-receive channel and draw them
+// onto the live canvas.  Called when the user switches to a channel that is
+// already decoding so they see the image so far rather than a blank canvas.
+async function replayLiveCanvas(label) {
+  try {
+    const resp = await fetch(BASE_PATH + '/api/live/replay?label=' + encodeURIComponent(label));
+    if (!resp.ok) return;
+    const body = await resp.json();
+    if (!body.rows || body.rows.length === 0) return;
+    // Only replay if we are still watching this channel.
+    if (liveDrawingLabel !== label) return;
+    for (const b64 of body.rows) {
+      // Stop replaying if the user switched away mid-replay.
+      if (liveDrawingLabel !== label) break;
+      const bin = atob(b64);
+      const pixels = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) pixels[i] = bin.charCodeAt(i);
+      appendLiveLine(pixels);
+    }
+  } catch (e) {
+    console.warn('[replay]', e);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Gallery

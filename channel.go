@@ -239,6 +239,25 @@ func (c *wefaxChannel) handleStop() {
 	}()
 }
 
+// snapshotRows returns a copy of the rows accumulated so far in the current
+// in-progress image, along with the channel's frequency.  Used by the replay
+// endpoint so a newly-connected browser can catch up on a mid-receive image.
+func (c *wefaxChannel) snapshotRows() (freqHz int, rows [][]byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentImg == nil {
+		return c.inst.freqHz, nil
+	}
+	freqHz = c.inst.freqHz
+	rows = make([][]byte, len(c.currentImg.rows))
+	for i, r := range c.currentImg.rows {
+		cp := make([]byte, len(r))
+		copy(cp, r)
+		rows[i] = cp
+	}
+	return
+}
+
 func (c *wefaxChannel) handleImageLine(msg []byte) {
 	// Protocol: [type:1][line:4BE][width:4BE][pixels:width]
 	if len(msg) < 9 {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -286,6 +287,44 @@ func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*we
 				flusher.Flush()
 			}
 		}
+	})
+
+	// -----------------------------------------------------------------------
+	// GET /api/live/replay?label= — returns buffered rows for an in-progress image
+	// Response: {"label":…,"freq_hz":…,"rows":[<base64>,…]}
+	// -----------------------------------------------------------------------
+	mux.HandleFunc("/api/live/replay", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		label := r.URL.Query().Get("label")
+		if label == "" {
+			http.Error(w, "label required", http.StatusBadRequest)
+			return
+		}
+		var ch *wefaxChannel
+		for _, c := range channels {
+			if c.label == label {
+				ch = c
+				break
+			}
+		}
+		if ch == nil {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+		freqHz, rows := ch.snapshotRows()
+		// Encode each row as base64 for JSON transport.
+		b64rows := make([]string, len(rows))
+		for i, r := range rows {
+			b64rows[i] = base64.StdEncoding.EncodeToString(r)
+		}
+		writeJSON(w, map[string]interface{}{
+			"label":   label,
+			"freq_hz": freqHz,
+			"rows":    b64rows,
+		})
 	})
 
 	// -----------------------------------------------------------------------

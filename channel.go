@@ -87,6 +87,15 @@ func (c *wefaxChannel) run(ctx context.Context, cfg WEFAXConfig) {
 	}
 	defer c.decoder.Stop()
 
+	// When AutoStart is disabled the decoder emits image lines immediately
+	// without waiting for a START tone, so we must open an in-progress image
+	// right away.  If a START tone is later detected, handleStart() will
+	// discard the partial image and begin a fresh one.
+	if !cfg.AutoStart {
+		log.Printf("[%s] AutoStart disabled — opening image immediately", c.label)
+		c.handleStart()
+	}
+
 	// Start the image assembler goroutine.
 	go c.assembleImages(ctx)
 

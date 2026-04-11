@@ -19,7 +19,9 @@ args=""
 
 [ -n "$UBERSDR_URL"  ] && args="$args -url $UBERSDR_URL"
 [ -n "$UBERSDR_PASS" ] && args="$args -password $UBERSDR_PASS"
-[ -n "$OUTPUT_DIR"   ] && args="$args -output $OUTPUT_DIR"
+# Default output directory to /data (the Docker volume mount point).
+OUTPUT_DIR="${OUTPUT_DIR:-/data}"
+args="$args -output $OUTPUT_DIR"
 [ -n "$LPM"          ] && args="$args -lpm $LPM"
 [ -n "$IMAGE_WIDTH"  ] && args="$args -width $IMAGE_WIDTH"
 [ "$NO_PHASING"   = "1" ] && args="$args -no-phasing"

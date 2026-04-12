@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// minSaveRows is the minimum number of decoded rows an image must have before
+// it is written to disk.  Images shorter than this are discarded as partials
+// (e.g. tuned in mid-broadcast, false START detection, or very brief test
+// transmissions).
+const minSaveRows = 500
+
 // wefaxChannel owns one UberSDR instance and one WEFAXDecoder.
 // It converts raw PCM bytes → []int16 → decoder → image assembler.
 type wefaxChannel struct {
@@ -179,7 +185,7 @@ func (c *wefaxChannel) handleStart() {
 
 	var imgToSave *inProgressImage
 	if c.currentImg != nil {
-		if c.currentImg.startSeen && len(c.currentImg.rows) > 500 {
+		if c.currentImg.startSeen && len(c.currentImg.rows) >= minSaveRows {
 			// A complete (or near-complete) image was in progress but no STOP
 			// tone was detected before the next START arrived (common when the
 			// station's stop/start gap is shorter than the decoder threshold).
@@ -244,6 +250,12 @@ func (c *wefaxChannel) handleStop() {
 		log.Printf("[%s] STOP received but no START was seen — discarding %d rows", c.label, len(img.rows))
 		// Open a fresh silent buffer so lines continue to be captured until
 		// the next real START tone arrives.
+		c.openImageSilently()
+		return
+	}
+
+	if len(img.rows) < minSaveRows {
+		log.Printf("[%s] STOP — discarding short image (%d rows < %d minimum)", c.label, len(img.rows), minSaveRows)
 		c.openImageSilently()
 		return
 	}

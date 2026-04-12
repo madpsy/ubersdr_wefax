@@ -255,7 +255,9 @@ function resetGallery() {
   galleryRecords = [];
   galleryOffset = 0;
   galleryExhausted = false;
-  document.getElementById('gallery-list').innerHTML = '';
+  // Remove all day-groups but keep the sentinel in place.
+  const grid = document.getElementById('gallery-grid');
+  grid.querySelectorAll('.day-group').forEach(g => g.remove());
   document.getElementById('gallery-count').textContent = '';
 }
 
@@ -273,11 +275,10 @@ async function loadMoreImages() {
     if (imgs.length < GALLERY_PAGE) galleryExhausted = true;
     for (const rec of imgs) {
       galleryRecords.push(rec);
-      appendThumbCard(rec);
+      appendCardToGroup(rec);
     }
     galleryOffset += imgs.length;
     updateGalleryCount();
-    document.getElementById('btn-load-more').disabled = galleryExhausted;
 
     // After the first page loads following a channel switch, auto-open the
     // most recent image in the detail view if the channel is not currently
@@ -299,16 +300,74 @@ function updateGalleryCount() {
   el.textContent = galleryRecords.length + (galleryExhausted ? '' : '+') + ' images';
 }
 
-function appendThumbCard(rec) {
-  const list = document.getElementById('gallery-list');
-  const card = buildThumbCard(rec);
-  list.appendChild(card);
+// ---------------------------------------------------------------------------
+// Day-group helpers
+// ---------------------------------------------------------------------------
+
+function recDateKey(rec) {
+  // Use saved_at (ISO string) — slice to 'YYYY-MM-DD'.
+  if (!rec.saved_at) return 'Unknown';
+  return rec.saved_at.slice(0, 10);
 }
 
+function fmtDateLabel(key) {
+  if (key === 'Unknown') return 'Unknown date';
+  const d = new Date(key + 'T00:00:00Z');
+  return d.toLocaleDateString(undefined, {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC',
+  });
+}
+
+// Returns the existing .day-group for dateKey, or creates one before the sentinel.
+function getOrCreateDayGroup(dateKey) {
+  const grid = document.getElementById('gallery-grid');
+  const existing = grid.querySelector(`.day-group[data-date="${dateKey}"]`);
+  if (existing) return existing;
+  const group = document.createElement('div');
+  group.className = 'day-group';
+  group.dataset.date = dateKey;
+  group.innerHTML =
+    `<div class="day-group-label">${fmtDateLabel(dateKey)}<span class="day-group-count"></span></div>` +
+    `<div class="day-group-grid"></div>`;
+  const sentinel = document.getElementById('gallery-sentinel');
+  grid.insertBefore(group, sentinel);
+  return group;
+}
+
+function updateGroupCount(group) {
+  const badge = group.querySelector('.day-group-count');
+  if (!badge) return;
+  const n = group.querySelectorAll('.thumb-card').length;
+  badge.textContent = n > 0 ? String(n) : '';
+}
+
+// Append a card to the correct day-group (used when loading older pages).
+function appendCardToGroup(rec) {
+  const dateKey = recDateKey(rec);
+  const group   = getOrCreateDayGroup(dateKey);
+  const inner   = group.querySelector('.day-group-grid');
+  inner.appendChild(buildThumbCard(rec));
+  updateGroupCount(group);
+}
+
+// Prepend a card to the top of its day-group (used for newly received images).
 function prependThumbCard(rec) {
-  const list = document.getElementById('gallery-list');
-  const card = buildThumbCard(rec);
-  list.insertBefore(card, list.firstChild);
+  const dateKey = recDateKey(rec);
+  const grid    = document.getElementById('gallery-grid');
+  let group     = grid.querySelector(`.day-group[data-date="${dateKey}"]`);
+  if (!group) {
+    // New day — insert a fresh group at the very top (before any existing groups).
+    group = document.createElement('div');
+    group.className = 'day-group';
+    group.dataset.date = dateKey;
+    group.innerHTML =
+      `<div class="day-group-label">${fmtDateLabel(dateKey)}<span class="day-group-count"></span></div>` +
+      `<div class="day-group-grid"></div>`;
+    grid.insertBefore(group, grid.firstChild);
+  }
+  const inner = group.querySelector('.day-group-grid');
+  inner.insertBefore(buildThumbCard(rec), inner.firstChild);
+  updateGroupCount(group);
 }
 
 function buildThumbCard(rec) {
@@ -334,7 +393,20 @@ function buildThumbCard(rec) {
   return card;
 }
 
-document.getElementById('btn-load-more').addEventListener('click', loadMoreImages);
+// ---------------------------------------------------------------------------
+// Infinite scroll — load more images when the sentinel enters the viewport.
+// ---------------------------------------------------------------------------
+
+(function initInfiniteScroll() {
+  const sentinel = document.getElementById('gallery-sentinel');
+  if (!sentinel || typeof IntersectionObserver === 'undefined') return;
+  const observer = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting && !galleryExhausted) {
+      loadMoreImages();
+    }
+  }, { rootMargin: '200px' });
+  observer.observe(sentinel);
+})();
 
 // ---------------------------------------------------------------------------
 // Detail view
@@ -427,7 +499,17 @@ function removeRecordLocally(id) {
   const idx = galleryRecords.findIndex(r => r.id === id);
   if (idx >= 0) galleryRecords.splice(idx, 1);
   const card = document.querySelector(`.thumb-card[data-id="${id}"]`);
-  if (card) card.remove();
+  if (card) {
+    const inner = card.parentElement; // .day-group-grid
+    card.remove();
+    // Remove the day-group entirely if it is now empty.
+    if (inner && inner.querySelectorAll('.thumb-card').length === 0) {
+      const group = inner.closest('.day-group');
+      if (group) group.remove();
+    } else if (inner) {
+      updateGroupCount(inner.closest('.day-group'));
+    }
+  }
   updateGalleryCount();
 }
 

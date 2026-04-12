@@ -18,7 +18,7 @@ services:
       #   BMF (Taiwan)       : 4616000, 8140000, 12230000
       #
       # Edit to match the frequencies receivable at your location.
-      UBERSDR_CHANNELS: "4317900:usb,8503900:usb,12788500:usb,7880000:usb,13882500:usb,4610000:usb,11086500:usb"
+      UBERSDR_CHANNELS: "7880000:usb,4610000:usb"
       #
       # Uncomment and set as needed:
       # UBERSDR_PASS: ""

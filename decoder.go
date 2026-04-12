@@ -196,18 +196,18 @@ func NewWEFAXDecoder(sampleRate int, config WEFAXConfig) *WEFAXDecoder {
 		// Start as if already triggered so lines flow immediately.
 		// A STOP tone will reset this to false; a subsequent START tone
 		// will set it back to true — preserving normal image boundaries.
-		autoStarted:              config.AutoStart,
-		samplesPerSecNom:         float64(sampleRate),
-		samplesPerSecFrac:        float64(sampleRate),
-		samplesPerSecFracPrev:    float64(sampleRate),
-		imageColors:              1,
-		startIOC576Frequency:     300,
-		startIOC288Frequency:     675,
-		stopFrequency:            450,
-		startStopLength:          5,
-		phasingLines:             40,
-		lastType:                 HeaderImage,
-		stopChan:                 make(chan struct{}),
+		autoStarted:           config.AutoStart,
+		samplesPerSecNom:      float64(sampleRate),
+		samplesPerSecFrac:     float64(sampleRate),
+		samplesPerSecFracPrev: float64(sampleRate),
+		imageColors:           1,
+		startIOC576Frequency:  300,
+		startIOC288Frequency:  675,
+		stopFrequency:         450,
+		startStopLength:       5,
+		phasingLines:          40,
+		lastType:              HeaderImage,
+		stopChan:              make(chan struct{}),
 	}
 
 	d.firFilters[0] = NewFIRFilter(config.Bandwidth)
@@ -354,23 +354,36 @@ func (d *WEFAXDecoder) decodeFaxLine(resultChan chan<- []byte) {
 
 		if d.typeCount == threshold {
 			if lineType == HeaderStart {
-				if !d.includeHeadersInImages {
-					d.imageLine = 0
-					d.imgPos = 0
-					d.lineIncrAcc = 0
+				// When autoStart is enabled and we are already decoding (autoStarted==true),
+				// this is a false positive from the tone detector — image content can
+				// occasionally produce enough energy near 300 Hz to trip the threshold.
+				// Ignore it completely: do NOT reset phasing state and do NOT send a
+				// START signal upstream (which would cause the in-progress image to be
+				// discarded or prematurely saved).
+				if d.autoStart && d.autoStarted {
+					log.Printf("[WEFAX] Ignoring spurious START detection at line %d (already decoding)", d.imageLine)
+					// fall through — do nothing
+				} else {
+					// Genuine START: either autoStart is disabled, or we were waiting
+					// for a START after a STOP (autoStarted==false).
+					if !d.includeHeadersInImages {
+						d.imageLine = 0
+						d.imgPos = 0
+						d.lineIncrAcc = 0
+					}
+					d.phasingLinesLeft = d.phasingLines
+					d.phasingSkipData = 0
+					d.havePhasing = false
+					if d.autoStopped {
+						d.autoStopped = false
+						log.Printf("[WEFAX] Auto-stop cleared at line %d", d.imageLine)
+					}
+					if d.autoStart && !d.autoStarted {
+						d.autoStarted = true
+						log.Printf("[WEFAX] START signal detected, beginning decode at line %d", d.imageLine)
+					}
+					d.sendStartSignal(resultChan)
 				}
-				d.phasingLinesLeft = d.phasingLines
-				d.phasingSkipData = 0
-				d.havePhasing = false
-				if d.autoStopped {
-					d.autoStopped = false
-					log.Printf("[WEFAX] Auto-stop cleared at line %d", d.imageLine)
-				}
-				if d.autoStart && !d.autoStarted {
-					d.autoStarted = true
-					log.Printf("[WEFAX] START signal detected, beginning decode at line %d", d.imageLine)
-				}
-				d.sendStartSignal(resultChan)
 			} else if lineType == HeaderStop {
 				if d.autoStop {
 					d.autoStopped = true

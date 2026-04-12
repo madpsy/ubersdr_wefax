@@ -960,6 +960,17 @@ function disconnectFFT() {
 }
 
 // ---------------------------------------------------------------------------
+// SNR colour: red at 30 dB → orange at 40 dB → green at 50+ dB
+// Matches ubersdr_qsstv snrColor() exactly.
+// ---------------------------------------------------------------------------
+function snrColor(snrDB) {
+  // Clamp to [30, 50] then map to hue [0°=red, 120°=green]
+  const t = Math.max(0, Math.min(1, (snrDB - 30) / 20));
+  const hue = Math.round(t * 120); // 0 → 120
+  return `hsl(${hue}, 100%, 50%)`;
+}
+
+// ---------------------------------------------------------------------------
 // SNR display — always active for the selected channel
 // ---------------------------------------------------------------------------
 
@@ -971,18 +982,17 @@ function updateSNRDisplay(stats) {
   if (!stats || stats.count === 0) {
     valueEl.textContent = '—';
     barEl.style.width = '0%';
-    barEl.style.backgroundColor = '#6fcf97';
+    barEl.style.backgroundColor = snrColor(30);
     return;
   }
 
   const snr = stats.avg_db;
   valueEl.textContent = snr.toFixed(1) + ' dB';
 
-  // Map SNR to bar: 0 dB → 0%, 40 dB → 100%
-  const pct = Math.max(0, Math.min(100, (snr / 40) * 100));
+  // Map SNR to bar: 30 dB → 0%, 50 dB → 100% (matches snrColor scale)
+  const pct = Math.max(0, Math.min(100, ((snr - 30) / 20) * 100));
   barEl.style.width = pct + '%';
-  // Colour: red < 10 dB, yellow 10–20 dB, green > 20 dB
-  barEl.style.backgroundColor = snr < 10 ? '#eb5757' : snr < 20 ? '#f2c94c' : '#6fcf97';
+  barEl.style.backgroundColor = snrColor(snr);
 }
 
 function connectSNR(label) {

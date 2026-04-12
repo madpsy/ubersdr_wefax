@@ -78,9 +78,13 @@ func (s *imageStore) loadExisting() {
 			log.Printf("[imageStore] read %s: %v", path, err)
 			continue
 		}
+		if len(data) == 0 {
+			log.Printf("[imageStore] skip empty sidecar %s", e.Name())
+			continue
+		}
 		var rec imageRecord
 		if err := json.Unmarshal(data, &rec); err != nil {
-			log.Printf("[imageStore] parse %s: %v", path, err)
+			log.Printf("[imageStore] skip corrupt sidecar %s: %v", e.Name(), err)
 			continue
 		}
 		// Verify the PNG still exists.
@@ -230,11 +234,20 @@ func saveImage(img *inProgressImage, store *imageStore, hub *sseHub) error {
 		SNR:       img.snr,
 	}
 
-	// Write JSON sidecar.
+	// Write JSON sidecar atomically: marshal → temp file → rename, so a
+	// mid-write kill never leaves a zero-byte or truncated sidecar.
 	jsonPath := filepath.Join(store.outputDir, base+".json")
-	jdata, _ := json.MarshalIndent(rec, "", "  ")
-	if err := os.WriteFile(jsonPath, jdata, 0o644); err != nil {
-		log.Printf("[saveImage] write json: %v", err)
+	jdata, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		log.Printf("[saveImage] marshal json: %v", err)
+	} else {
+		tmpPath := jsonPath + ".tmp"
+		if err := os.WriteFile(tmpPath, jdata, 0o644); err != nil {
+			log.Printf("[saveImage] write json tmp: %v", err)
+		} else if err := os.Rename(tmpPath, jsonPath); err != nil {
+			log.Printf("[saveImage] rename json: %v", err)
+			_ = os.Remove(tmpPath)
+		}
 	}
 
 	store.add(rec)

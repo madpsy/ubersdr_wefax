@@ -98,9 +98,24 @@ type snrAccumulator struct {
 }
 
 func (a *snrAccumulator) add(baseband, noise float32) {
+	// Reject NaN/Inf values — the UberSDR server sends these as sentinels when
+	// signal-quality data is unavailable for a given channel/session.
+	// This prevents json.Marshal from failing with "unsupported value: NaN"
+	// when the saved imageRecord is later serialised for /api/images.
+	if math.IsNaN(float64(baseband)) || math.IsNaN(float64(noise)) ||
+		math.IsInf(float64(baseband), 0) || math.IsInf(float64(noise), 0) {
+		return
+	}
+	snr := baseband - noise
+	// Also reject physically implausible SNR values that indicate the server
+	// has no valid measurement (e.g. baseband == noise == 0 → snr == 0 is fine,
+	// but very large magnitudes suggest a bad reading).
+	if math.IsNaN(float64(snr)) || math.IsInf(float64(snr), 0) {
+		return
+	}
 	a.mu.Lock()
 	a.samples = append(a.samples, snrSample{
-		snrDB: baseband - noise,
+		snrDB: snr,
 		bb:    baseband,
 		noise: noise,
 	})
@@ -313,8 +328,8 @@ func (h *audioBroadcastHub) hasListeners() bool {
 // ---------------------------------------------------------------------------
 
 type instance struct {
-	freqHz    int    // published/carrier frequency (used for labels and metadata)
-	carrierHz int    // WEFAX carrier offset; dial freq sent to UberSDR = freqHz - carrierHz
+	freqHz    int // published/carrier frequency (used for labels and metadata)
+	carrierHz int // WEFAX carrier offset; dial freq sent to UberSDR = freqHz - carrierHz
 	audioMode string
 	label     string // e.g. "14230000_usb"
 
@@ -514,7 +529,8 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 	var totalPackets atomic.Int64
 
 	firstPacket := true
-	var instFFT *audioFFT // lazily created once sample rate is known
+	nanSigInfoLogged := false // log NaN signal-quality fields only once per connection
+	var instFFT *audioFFT     // lazily created once sample rate is known
 
 	inst.mu.Lock()
 	inst.status = "running"
@@ -563,8 +579,21 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 			}
 
 			// Accumulate SNR from v2 full-header packets.
+			// Log once per connection if the server sends NaN/Inf signal-quality
+			// values — this indicates the UberSDR server has no valid measurement
+			// for this channel (e.g. the frequency is not actively demodulated
+			// with signal-quality reporting, or the server predates the v2 header).
 			if pkt.hasSigInfo {
-				inst.snrAccum.add(pkt.basebandDBFS, pkt.noiseDBFS)
+				bb, ns := pkt.basebandDBFS, pkt.noiseDBFS
+				if math.IsNaN(float64(bb)) || math.IsNaN(float64(ns)) ||
+					math.IsInf(float64(bb), 0) || math.IsInf(float64(ns), 0) {
+					if !nanSigInfoLogged {
+						log.Printf("[%s] v2 packet has NaN/Inf signal-quality fields (bb=%.3g noise=%.3g) — SNR will not be recorded for this channel", inst.label, bb, ns)
+						nanSigInfoLogged = true
+					}
+				} else {
+					inst.snrAccum.add(bb, ns)
+				}
 			}
 
 			// Downmix stereo (wfm) to mono
@@ -723,4 +752,3 @@ func (inst *instance) statusSnapshot() map[string]interface{} {
 		"channels":      ch,
 	}
 }
-

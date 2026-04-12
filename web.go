@@ -30,9 +30,9 @@ type sseEvent struct {
 }
 
 type sseClient struct {
-	ch     chan sseEvent
-	label  string // optional channel filter ("" = all)
-	done   chan struct{}
+	ch    chan sseEvent
+	label string // optional channel filter ("" = all)
+	done  chan struct{}
 }
 
 type sseHub struct {
@@ -63,17 +63,30 @@ func (h *sseHub) unsubscribe(c *sseClient) {
 	close(c.done)
 }
 
+// labelOfEvent extracts the "label" field from an SSE event's Data, supporting
+// both map[string]interface{} (used by channel_start/stop events) and
+// *imageRecord (used by new_image events).  Returns "" if not found.
+func labelOfEvent(data interface{}) string {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		if lv, ok := v["label"].(string); ok {
+			return lv
+		}
+	case map[string]string:
+		return v["label"]
+	case *imageRecord:
+		return v.Label
+	}
+	return ""
+}
+
 func (h *sseHub) broadcast(ev sseEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	evLabel := labelOfEvent(ev.Data)
 	for c := range h.clients {
-		if c.label != "" {
-			// label filter: only deliver events that carry a matching label in Data
-			if m, ok := ev.Data.(map[string]interface{}); ok {
-				if lv, ok := m["label"].(string); ok && lv != c.label {
-					continue
-				}
-			}
+		if c.label != "" && evLabel != "" && evLabel != c.label {
+			continue
 		}
 		select {
 		case c.ch <- ev:
@@ -195,10 +208,20 @@ func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*we
 		offset, _ := strconv.Atoi(q.Get("offset"))
 
 		recs := store.list(label, limit, offset)
-		writeJSON(w, map[string]interface{}{
+		// Pre-encode to a buffer so that a NaN/Inf in any record's SNR fields
+		// returns a proper HTTP 500 instead of a truncated response body.
+		payload := map[string]interface{}{
 			"images": recs,
 			"count":  len(recs),
-		})
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("[web] /api/images marshal: %v", err)
+			http.Error(w, "json encode error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
 	})
 
 	// -----------------------------------------------------------------------

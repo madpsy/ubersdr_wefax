@@ -59,6 +59,9 @@
           <button id="btn-prev" title="Previous">&#8592;</button>
           <button id="btn-close-detail" title="Close">✕</button>
           <button id="btn-next" title="Next">&#8594;</button>
+          <div id="detail-nav-spacer"></div>
+          <button id="btn-rotate-left" title="Rotate left 90°">↺</button>
+          <button id="btn-rotate-right" title="Rotate right 90°">↻</button>
         </div>
         <div id="detail-body">
           <div id="detail-image-wrap">
@@ -136,7 +139,11 @@
   <!-- Lightbox overlay -->
   <div id="lightbox" class="hidden" role="dialog" aria-modal="true" aria-label="Image viewer">
     <div id="lightbox-body">
-      <button id="lightbox-close" title="Close">✕</button>
+      <div id="lightbox-controls">
+        <button id="lightbox-rotate-left" title="Rotate left 90°">↺</button>
+        <button id="lightbox-rotate-right" title="Rotate right 90°">↻</button>
+        <button id="lightbox-close" title="Close">✕</button>
+      </div>
       <img id="lightbox-img" src="" alt="" />
     </div>
   </div>

@@ -21,10 +21,19 @@ import (
 	"syscall"
 )
 
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
 // channelFlag is a repeatable -channel flag value.
 type channelFlag []string
 
-func (c *channelFlag) String() string  { return strings.Join(*c, ", ") }
+func (c *channelFlag) String() string { return strings.Join(*c, ", ") }
 func (c *channelFlag) Set(v string) error {
 	*c = append(*c, v)
 	return nil
@@ -32,15 +41,22 @@ func (c *channelFlag) Set(v string) error {
 
 func main() {
 	var (
-		ubersdrURL = flag.String("url", "", "UberSDR WebSocket URL (e.g. ws://host/ws)")
-		password   = flag.String("password", "", "UberSDR password (optional)")
-		listenAddr = flag.String("listen", ":8080", "HTTP listen address")
-		outputDir  = flag.String("output", "./images", "Directory to save decoded images")
-		lpm        = flag.Int("lpm", 120, "Lines per minute (120 or 60)")
-		imageWidth = flag.Int("width", 1809, "Image width in pixels (IOC-576=1809, IOC-288=904)")
-		noPhasing  = flag.Bool("no-phasing", false, "Disable phasing (horizontal sync)")
-		noAutoStop = flag.Bool("no-autostop", false, "Disable auto-stop on STOP tone")
+		ubersdrURL  = flag.String("url", "", "UberSDR WebSocket URL (e.g. ws://host/ws)")
+		password    = flag.String("password", "", "UberSDR password (optional)")
+		listenAddr  = flag.String("listen", ":8080", "HTTP listen address")
+		outputDir   = flag.String("output", "./images", "Directory to save decoded images")
+		lpm         = flag.Int("lpm", 120, "Lines per minute (120 or 60)")
+		imageWidth  = flag.Int("width", 1809, "Image width in pixels (IOC-576=1809, IOC-288=904)")
+		noPhasing   = flag.Bool("no-phasing", false, "Disable phasing (horizontal sync)")
+		noAutoStop  = flag.Bool("no-autostop", false, "Disable auto-stop on STOP tone")
 		noAutoStart = flag.Bool("no-autostart", false, "Disable auto-start on START tone")
+
+		cleanupPartialDays = flag.Int("cleanup-partial-days", envIntOr("CLEANUP_PARTIAL_DAYS", 7),
+			"Delete partial images (< 95% decoded) older than N days; 0 = disabled (env: CLEANUP_PARTIAL_DAYS)")
+		cleanupSNRDays = flag.Int("cleanup-snr-days", envIntOr("CLEANUP_SNR_DAYS", 7),
+			"Delete low-SNR images (< 40 dB avg) older than N days; 0 = disabled (env: CLEANUP_SNR_DAYS)")
+		cleanupAllDays = flag.Int("cleanup-all-days", envIntOr("CLEANUP_ALL_DAYS", 30),
+			"Delete ALL images older than N days regardless of quality; 0 = disabled (env: CLEANUP_ALL_DAYS)")
 	)
 
 	var channels channelFlag
@@ -73,8 +89,13 @@ func main() {
 	log.Printf("[main] WEFAX config: LPM=%d Width=%d Phasing=%v AutoStop=%v AutoStart=%v",
 		cfg.LPM, cfg.ImageWidth, cfg.UsePhasing, cfg.AutoStop, cfg.AutoStart)
 
-	store := newImageStore(*outputDir)
 	hub := newSSEHub()
+	store := newImageStore(*outputDir, hub)
+
+	// Start background cleanup workers (no-ops when their day threshold is 0).
+	startPartialCleanup(store, *outputDir, *cleanupPartialDays)
+	startSNRCleanup(store, *outputDir, *cleanupSNRDays)
+	startAgeCleanup(store, *outputDir, *cleanupAllDays)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

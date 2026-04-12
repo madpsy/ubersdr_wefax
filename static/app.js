@@ -412,10 +412,25 @@ function buildThumbCard(rec) {
 // Detail view
 // ---------------------------------------------------------------------------
 
+// Detail-view rotation state
+let detailRotation = 0;
+
+function applyDetailRotation() {
+  const img = document.getElementById('detail-img');
+  img.style.transform = detailRotation ? `rotate(${detailRotation}deg)` : '';
+  const transposed = detailRotation === 90 || detailRotation === 270;
+  img.style.maxWidth  = transposed ? '100%' : '';
+  img.style.maxHeight = transposed ? '100%' : '';
+}
+
 function selectRecord(id) {
   selectedID = id;
   const rec = galleryRecords.find(r => r.id === id);
   if (!rec) return;
+
+  // Reset rotation for each new image.
+  detailRotation = 0;
+  applyDetailRotation();
 
   // Highlight selected card.
   document.querySelectorAll('.thumb-card').forEach(c => c.classList.remove('selected'));
@@ -472,6 +487,16 @@ function updateDetailNav() {
 
 document.getElementById('btn-close-detail').addEventListener('click', closeDetail);
 
+document.getElementById('btn-rotate-left').addEventListener('click', () => {
+  detailRotation = (detailRotation - 90 + 360) % 360;
+  applyDetailRotation();
+});
+
+document.getElementById('btn-rotate-right').addEventListener('click', () => {
+  detailRotation = (detailRotation + 90) % 360;
+  applyDetailRotation();
+});
+
 document.getElementById('btn-prev').addEventListener('click', () => {
   const idx = galleryRecords.findIndex(r => r.id === selectedID);
   if (idx > 0) selectRecord(galleryRecords[idx - 1].id);
@@ -514,13 +539,36 @@ function removeRecordLocally(id) {
 }
 
 // Lightbox on image click.
+let lightboxRotation = 0;
+
+function applyLightboxRotation() {
+  const img = document.getElementById('lightbox-img');
+  img.style.transform = lightboxRotation ? `rotate(${lightboxRotation}deg)` : '';
+  // When rotated 90/270 degrees the image is transposed — swap the visual
+  // dimensions so it still fits within the viewport without clipping.
+  const transposed = lightboxRotation === 90 || lightboxRotation === 270;
+  img.style.maxWidth  = transposed ? '90vh' : '';
+  img.style.maxHeight = transposed ? '90vw' : '';
+}
+
 document.getElementById('detail-img').addEventListener('click', function () {
+  lightboxRotation = 0;
   const lb = document.getElementById('lightbox');
-  document.getElementById('lightbox-img').src = this.src;
+  const lbImg = document.getElementById('lightbox-img');
+  lbImg.src = this.src;
+  applyLightboxRotation();
   lb.classList.remove('hidden');
 });
 document.getElementById('lightbox-close').addEventListener('click', () => {
   document.getElementById('lightbox').classList.add('hidden');
+});
+document.getElementById('lightbox-rotate-left').addEventListener('click', () => {
+  lightboxRotation = (lightboxRotation - 90 + 360) % 360;
+  applyLightboxRotation();
+});
+document.getElementById('lightbox-rotate-right').addEventListener('click', () => {
+  lightboxRotation = (lightboxRotation + 90) % 360;
+  applyLightboxRotation();
 });
 document.getElementById('lightbox').addEventListener('click', function (e) {
   if (e.target === this) this.classList.add('hidden');

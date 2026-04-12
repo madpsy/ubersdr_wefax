@@ -304,6 +304,10 @@ select:focus { outline: 2px solid var(--accent); }
   flex-shrink: 0;
 }
 
+#detail-nav-spacer {
+  flex: 1;
+}
+
 /* Image + sidebar sit side-by-side below the nav bar */
 #detail-body {
   display: flex;
@@ -556,10 +560,17 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
   /* Show at native pixel size — no scaling */
 }
 
-#lightbox-close {
+#lightbox-controls {
   position: fixed;
   top: 10px;
   right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 201;
+}
+
+#lightbox-controls button {
   background: rgba(0,0,0,0.6);
   border: 1px solid #555;
   color: #fff;
@@ -567,7 +578,13 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
   cursor: pointer;
   padding: 4px 10px;
   border-radius: 4px;
-  z-index: 201;
+  line-height: 1;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+#lightbox-controls button:hover {
+  background: rgba(60,60,60,0.85);
+  border-color: var(--accent);
 }
 
 /* ── Utility ── */

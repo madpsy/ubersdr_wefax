@@ -26,9 +26,12 @@ services:
       # WEB_PORT: "6094"
       # LPM: "120"          # Lines per minute: 120 (default) or 60
       # IMAGE_WIDTH: "1809" # 1809 = IOC-576 (default), 904 = IOC-288
-      # NO_PHASING: "0"     # Set to 1 to disable horizontal phasing sync
-      # NO_AUTOSTOP: "0"    # Set to 1 to disable auto-stop on STOP tone
-      # NO_AUTOSTART: "0"   # Set to 1 to disable auto-start on START tone
+      # NO_PHASING: "0"              # Set to 1 to disable horizontal phasing sync
+      # NO_AUTOSTOP: "0"             # Set to 1 to disable auto-stop on STOP tone
+      # NO_AUTOSTART: "0"            # Set to 1 to disable auto-start on START tone
+      # CLEANUP_PARTIAL_DAYS: "7"    # Delete partial images older than N days (0=disabled)
+      # CLEANUP_SNR_DAYS: "7"        # Delete low-SNR images (< 40 dB avg) older than N days (0=disabled)
+      # CLEANUP_ALL_DAYS: "30"       # Delete ALL images older than N days (0=disabled)
     ports:
       - "6094:6094"
     networks:

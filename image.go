@@ -46,12 +46,16 @@ type imageStore struct {
 	mu        sync.RWMutex
 	records   []*imageRecord // newest first
 	byID      map[string]*imageRecord
+	deleted   map[string]struct{} // IDs removed by cleanup; prevents re-insertion on restart
+	hub       *sseHub             // for broadcasting delete events from cleanup workers
 	outputDir string
 }
 
-func newImageStore(outputDir string) *imageStore {
+func newImageStore(outputDir string, hub *sseHub) *imageStore {
 	s := &imageStore{
 		byID:      make(map[string]*imageRecord),
+		deleted:   make(map[string]struct{}),
+		hub:       hub,
 		outputDir: outputDir,
 	}
 	s.loadExisting()
@@ -90,6 +94,10 @@ func (s *imageStore) loadExisting() {
 		// Sanitise any NaN/Inf SNR fields that may have been written by older
 		// versions of the code before the NaN guard was added.
 		rec.SNR.Sanitise()
+		// Skip records that were deleted by a cleanup worker before restart.
+		if _, wasDel := s.deleted[rec.ID]; wasDel {
+			continue
+		}
 		// Verify the PNG still exists.
 		if _, err := os.Stat(filepath.Join(s.outputDir, rec.Filename)); err != nil {
 			continue

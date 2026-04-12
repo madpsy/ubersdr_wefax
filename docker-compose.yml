@@ -22,6 +22,7 @@ services:
       #
       # Uncomment and set as needed:
       # UBERSDR_PASS: ""
+      # UI_PASSWORD: ""          # Set to enable password-protected delete in the web UI
       OUTPUT_DIR: "/data"
       # WEB_PORT: "6094"
       # LPM: "120"          # Lines per minute: 120 (default) or 60

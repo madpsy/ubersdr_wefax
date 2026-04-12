@@ -8,6 +8,25 @@
   <link rel="stylesheet" href="{{.BasePath}}/static/style.css" />
 </head>
 <body>
+
+  <!-- Password modal -->
+  <div id="auth-modal" role="dialog" aria-modal="true" aria-label="Authentication required">
+    <div id="auth-modal-box">
+      <div id="auth-modal-header">
+        <span id="auth-modal-title">🔒 Authentication Required</span>
+      </div>
+      <div id="auth-modal-body">
+        <p id="auth-modal-message">Enter the UI password to continue.</p>
+        <input id="auth-password-input" type="password" placeholder="Password" autocomplete="current-password">
+        <div id="auth-modal-actions">
+          <button id="auth-submit-btn">Unlock</button>
+          <button id="auth-cancel-btn">Cancel</button>
+        </div>
+        <p id="auth-modal-error" class="auth-error"></p>
+      </div>
+    </div>
+  </div>
+
   <header>
     <div id="header-left">
       <span id="app-title">📠 UberSDR WEFAX</span>

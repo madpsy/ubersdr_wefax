@@ -21,6 +21,13 @@ import (
 	"syscall"
 )
 
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func envIntOr(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -50,6 +57,8 @@ func main() {
 		noPhasing   = flag.Bool("no-phasing", false, "Disable phasing (horizontal sync)")
 		noAutoStop  = flag.Bool("no-autostop", false, "Disable auto-stop on STOP tone")
 		noAutoStart = flag.Bool("no-autostart", false, "Disable auto-start on START tone")
+		uiPassword  = flag.String("ui-password", envOr("UI_PASSWORD", ""),
+			"Password required for write actions in the web UI (env: UI_PASSWORD; empty = write actions disabled)")
 
 		cleanupPartialDays = flag.Int("cleanup-partial-days", envIntOr("CLEANUP_PARTIAL_DAYS", 7),
 			"Delete partial images (< 95% decoded) older than N days; 0 = disabled (env: CLEANUP_PARTIAL_DAYS)")
@@ -116,7 +125,7 @@ func main() {
 
 	// Start HTTP server in background.
 	go func() {
-		if err := startHTTPServer(*listenAddr, store, hub, wefaxChannels); err != nil {
+		if err := startHTTPServer(*listenAddr, store, hub, wefaxChannels, *uiPassword); err != nil {
 			log.Fatalf("[main] HTTP server: %v", err)
 		}
 	}()

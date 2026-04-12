@@ -15,6 +15,171 @@
 const BASE_PATH = (typeof window.BASE_PATH === 'string') ? window.BASE_PATH : '';
 
 // ---------------------------------------------------------------------------
+// Auth state
+// ---------------------------------------------------------------------------
+// Whether the server has a password configured (fetched on boot from /api/auth/status).
+let authPasswordConfigured = false;
+// Whether the current browser session is authenticated.
+let authAuthenticated = false;
+// Queue of callbacks waiting for the user to authenticate.
+let authPendingCallbacks = [];
+
+const AUTH_STORAGE_KEY = 'ubersdr_wefax_ui_password';
+
+// Attempt to authenticate silently using a password string.
+// Returns a Promise that resolves true on success, false on failure.
+function _tryPassword(pw) {
+  return fetch(BASE_PATH + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pw }),
+  })
+    .then(r => {
+      if (!r.ok) return false;
+      authAuthenticated = true;
+      localStorage.setItem(AUTH_STORAGE_KEY, pw);
+      return true;
+    })
+    .catch(() => false);
+}
+
+// Try the password saved in localStorage silently.
+// Calls onSuccess() if it works, onFail() if not (or nothing stored).
+function tryStoredPassword(onSuccess, onFail) {
+  const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!stored) { onFail(); return; }
+  _tryPassword(stored).then(ok => {
+    if (ok) { onSuccess(); }
+    else {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      onFail();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auth modal
+// ---------------------------------------------------------------------------
+function openAuthModal(onSuccess, onCancel) {
+  authPendingCallbacks.push({ onSuccess, onCancel });
+  if (authPendingCallbacks.length > 1) return; // modal already open
+
+  const modal    = document.getElementById('auth-modal');
+  const input    = document.getElementById('auth-password-input');
+  const errorEl  = document.getElementById('auth-modal-error');
+  const submitBtn = document.getElementById('auth-submit-btn');
+  const cancelBtn = document.getElementById('auth-cancel-btn');
+
+  if (!modal) return;
+  errorEl.textContent = '';
+  input.value = '';
+  modal.classList.add('open');
+  setTimeout(() => input.focus(), 50);
+
+  function doSubmit() {
+    const pw = input.value;
+    if (!pw) { errorEl.textContent = 'Please enter a password.'; return; }
+    submitBtn.disabled = true;
+    submitBtn.textContent = '…';
+    fetch(BASE_PATH + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    })
+      .then(r => {
+        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Incorrect password'); });
+        return r.json();
+      })
+      .then(() => {
+        authAuthenticated = true;
+        localStorage.setItem(AUTH_STORAGE_KEY, pw);
+        modal.classList.remove('open');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Unlock';
+        input.removeEventListener('keydown', onKeydown);
+        // Fire all queued success callbacks.
+        const cbs = authPendingCallbacks.splice(0);
+        for (const cb of cbs) cb.onSuccess();
+      })
+      .catch(err => {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        errorEl.textContent = err.message || 'Incorrect password.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Unlock';
+        input.value = '';
+        input.focus();
+      });
+  }
+
+  function doCancel() {
+    modal.classList.remove('open');
+    input.removeEventListener('keydown', onKeydown);
+    const cbs = authPendingCallbacks.splice(0);
+    for (const cb of cbs) { if (cb.onCancel) cb.onCancel(); }
+  }
+
+  function onKeydown(e) {
+    if (e.key === 'Enter') { e.preventDefault(); doSubmit(); }
+    if (e.key === 'Escape') { e.preventDefault(); doCancel(); }
+  }
+
+  submitBtn.onclick = doSubmit;
+  cancelBtn.onclick = doCancel;
+  input.addEventListener('keydown', onKeydown);
+}
+
+// requireAuth wraps an action: if auth is not needed (no password configured)
+// it shows a "not available" notice; if already authenticated it runs the action
+// immediately; otherwise tries the stored password silently, then opens the modal.
+function requireAuth(action) {
+  if (!authPasswordConfigured) {
+    // No password set — write actions are disabled.
+    showAuthNotice('Write actions are disabled. Set UI_PASSWORD to enable them.');
+    return;
+  }
+  if (authAuthenticated) {
+    action();
+    return;
+  }
+  // Try the stored password silently before showing the modal.
+  tryStoredPassword(
+    () => action(),          // stored password worked — run action directly
+    () => openAuthModal(     // no stored password or it failed — show modal
+      () => action(),
+      () => {},
+    ),
+  );
+}
+
+// Show a brief inline notice (reuses the auth modal as a toast).
+function showAuthNotice(msg) {
+  const modal    = document.getElementById('auth-modal');
+  const errorEl  = document.getElementById('auth-modal-error');
+  const input    = document.getElementById('auth-password-input');
+  const submitBtn = document.getElementById('auth-submit-btn');
+  const cancelBtn = document.getElementById('auth-cancel-btn');
+  if (!modal) { alert(msg); return; }
+  // Show modal in read-only notice mode.
+  if (input)    input.style.display = 'none';
+  if (submitBtn) submitBtn.style.display = 'none';
+  if (cancelBtn) cancelBtn.textContent = 'Close';
+  const msgEl = document.getElementById('auth-modal-message');
+  if (msgEl) msgEl.textContent = msg;
+  if (errorEl) errorEl.textContent = '';
+  modal.classList.add('open');
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      modal.classList.remove('open');
+      // Restore for next real auth use.
+      if (input)    input.style.display = '';
+      if (submitBtn) submitBtn.style.display = '';
+      cancelBtn.textContent = 'Cancel';
+      if (msgEl) msgEl.textContent = 'Enter the UI password to continue.';
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
@@ -507,18 +672,30 @@ document.getElementById('btn-next').addEventListener('click', () => {
   if (idx >= 0 && idx < galleryRecords.length - 1) selectRecord(galleryRecords[idx + 1].id);
 });
 
-document.getElementById('btn-delete').addEventListener('click', async () => {
+document.getElementById('btn-delete').addEventListener('click', () => {
   if (!selectedID) return;
+  requireAuth(() => _doDelete(selectedID));
+});
+
+async function _doDelete(id) {
   if (!confirm('Delete this image?')) return;
+  const btn = document.getElementById('btn-delete');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
-    const resp = await fetch(BASE_PATH + '/api/images/' + selectedID, { method: 'DELETE' });
-    if (!resp.ok) { alert('Delete failed'); return; }
-    removeRecordLocally(selectedID);
+    const resp = await fetch(BASE_PATH + '/api/images/' + id, { method: 'DELETE' });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      alert('Delete failed: ' + (d.error || resp.status));
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+      return;
+    }
+    removeRecordLocally(id);
     closeDetail();
   } catch (e) {
     alert('Delete error: ' + e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
   }
-});
+}
 
 function removeRecordLocally(id) {
   const idx = galleryRecords.findIndex(r => r.id === id);
@@ -1186,6 +1363,22 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 
 (async function init() {
+  // Fetch auth status so requireAuth() knows whether a password is configured.
+  try {
+    const d = await fetch(BASE_PATH + '/api/auth/status').then(r => r.json());
+    authPasswordConfigured = !!d.password_configured;
+    authAuthenticated      = !!d.authenticated;
+    if (authPasswordConfigured && !authAuthenticated) {
+      // Session expired (or new tab) — try stored password silently.
+      tryStoredPassword(
+        () => { authAuthenticated = true; },
+        () => {},
+      );
+    }
+  } catch (e) {
+    console.warn('auth status fetch failed:', e);
+  }
+
   initAudioPanel();
   await loadChannels();
   await loadMoreImages();

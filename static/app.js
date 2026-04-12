@@ -211,6 +211,9 @@ document.getElementById('channel-select').addEventListener('change', function ()
   // Connect SNR stream for the selected channel (or disconnect if "all").
   connectSNR(activeLabel);
   resetGallery();
+  // Signal loadMoreImages() to auto-open the most recent image after the
+  // first page loads, provided the channel is not currently decoding.
+  autoSelectAfterLoad = true;
   loadMoreImages();
   reconnectSSE();
 });
@@ -243,6 +246,11 @@ async function replayLiveCanvas(label) {
 // Gallery
 // ---------------------------------------------------------------------------
 
+// Set to true by the channel-select change handler so that the first
+// loadMoreImages() call after a channel switch auto-selects the most recent
+// image when the channel is not currently decoding.
+let autoSelectAfterLoad = false;
+
 function resetGallery() {
   galleryRecords = [];
   galleryOffset = 0;
@@ -255,6 +263,8 @@ async function loadMoreImages() {
   if (galleryExhausted) return;
   const params = new URLSearchParams({ limit: GALLERY_PAGE, offset: galleryOffset });
   if (activeLabel) params.set('label', activeLabel);
+  const isFirstLoad = autoSelectAfterLoad;
+  autoSelectAfterLoad = false; // consume the flag
   try {
     const resp = await fetch(BASE_PATH + '/api/images?' + params);
     if (!resp.ok) return;
@@ -268,6 +278,17 @@ async function loadMoreImages() {
     galleryOffset += imgs.length;
     updateGalleryCount();
     document.getElementById('btn-load-more').disabled = galleryExhausted;
+
+    // After the first page loads following a channel switch, auto-open the
+    // most recent image in the detail view if the channel is not currently
+    // decoding (i.e. there is no live canvas to show).
+    if (isFirstLoad && galleryRecords.length > 0) {
+      const ch = channels.find(c => c.label === activeLabel);
+      const isDecoding = ch && ch.decoding;
+      if (!isDecoding) {
+        selectRecord(galleryRecords[0].id);
+      }
+    }
   } catch (e) {
     console.warn('loadMoreImages:', e);
   }
@@ -335,6 +356,11 @@ function selectRecord(id) {
   dv.classList.remove('hidden');
 
   document.getElementById('detail-img').src = BASE_PATH + '/images/' + rec.filename;
+
+  // Update download link to point at the full-resolution PNG.
+  const dlBtn = document.getElementById('btn-download');
+  dlBtn.href = BASE_PATH + '/images/' + rec.filename;
+  dlBtn.download = rec.filename;
 
   const table = document.getElementById('detail-meta-table');
   const snr = rec.snr || {};

@@ -316,6 +316,28 @@ select:focus { outline: 2px solid var(--accent); }
   padding: 8px 10px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Download link styled as a button */
+#btn-download {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  background: var(--bg3);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+#btn-download:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 /* ── Audio panel ── */

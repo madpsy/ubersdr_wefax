@@ -33,13 +33,13 @@ type wefaxChannel struct {
 
 // inProgressImage accumulates pixel rows for one fax image.
 type inProgressImage struct {
-	rows      [][]byte  // one entry per emitted output line
+	rows      [][]byte // one entry per emitted output line
 	startedAt time.Time
 	freqHz    int
 	audioMode string
 	label     string
-	snr       SNRStats  // drained from instance at STOP time
-	startSeen bool      // true only when a real START tone opened this image
+	snr       SNRStats // drained from instance at STOP time
+	startSeen bool     // true only when a real START tone opened this image
 }
 
 func newWefaxChannel(inst *instance, cfg WEFAXConfig, store *imageStore, hub *sseHub) *wefaxChannel {
@@ -176,10 +176,19 @@ func (c *wefaxChannel) openImageSilently() {
 
 func (c *wefaxChannel) handleStart() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
+	var imgToSave *inProgressImage
 	if c.currentImg != nil {
-		log.Printf("[%s] START received while image in progress — discarding partial (%d rows)", c.label, len(c.currentImg.rows))
+		if c.currentImg.startSeen && len(c.currentImg.rows) > 500 {
+			// A complete (or near-complete) image was in progress but no STOP
+			// tone was detected before the next START arrived (common when the
+			// station's stop/start gap is shorter than the decoder threshold).
+			// Save it rather than discarding it.
+			imgToSave = c.currentImg
+			log.Printf("[%s] START received while image in progress — saving previous image (%d rows) instead of discarding", c.label, len(c.currentImg.rows))
+		} else {
+			log.Printf("[%s] START received while image in progress — discarding partial (%d rows, startSeen=%v)", c.label, len(c.currentImg.rows), c.currentImg.startSeen)
+		}
 	}
 	c.currentImg = &inProgressImage{
 		startedAt: time.Now(),
@@ -190,6 +199,18 @@ func (c *wefaxChannel) handleStart() {
 	}
 	c.decoding = true
 	log.Printf("[%s] START — new image begun", c.label)
+	c.mu.Unlock()
+
+	// Save the previous image (if any) without holding the lock.
+	if imgToSave != nil {
+		imgToSave.snr = c.inst.DrainSNR()
+		log.Printf("[%s] saving previous image (%d rows, SNR avg=%.1f dB)", c.label, len(imgToSave.rows), imgToSave.snr.AvgDB)
+		go func() {
+			if err := saveImage(imgToSave, c.store, c.hub); err != nil {
+				log.Printf("[%s] saveImage (rescued): %v", c.label, err)
+			}
+		}()
+	}
 
 	// Notify SSE clients of a new live image starting.
 	c.hub.broadcast(sseEvent{
@@ -286,10 +307,10 @@ func (c *wefaxChannel) handleImageLine(msg []byte) {
 	c.hub.broadcast(sseEvent{
 		Event: "fax_line",
 		Data: map[string]interface{}{
-			"label":    c.label,
-			"freq_hz":  c.inst.freqHz,
-			"line":     lineNum,
-			"width":    width,
+			"label":      c.label,
+			"freq_hz":    c.inst.freqHz,
+			"line":       lineNum,
+			"width":      width,
 			"pixels_b64": encodePixelsB64(pixels),
 		},
 	})

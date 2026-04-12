@@ -87,6 +87,9 @@ func (s *imageStore) loadExisting() {
 			log.Printf("[imageStore] skip corrupt sidecar %s: %v", e.Name(), err)
 			continue
 		}
+		// Sanitise any NaN/Inf SNR fields that may have been written by older
+		// versions of the code before the NaN guard was added.
+		rec.SNR.Sanitise()
 		// Verify the PNG still exists.
 		if _, err := os.Stat(filepath.Join(s.outputDir, rec.Filename)); err != nil {
 			continue

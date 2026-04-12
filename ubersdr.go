@@ -86,6 +86,26 @@ type SNRStats struct {
 	NoiseAvg    float32 `json:"noise_avg_dbfs"`
 }
 
+// sanitiseFloat replaces NaN/Inf with 0 so the value is safe for JSON encoding.
+func sanitiseFloat(f float32) float32 {
+	if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+		return 0
+	}
+	return f
+}
+
+// Sanitise replaces any NaN/Inf fields with 0 in-place and returns the receiver.
+// Called before saving to disk or encoding to JSON to prevent
+// "json: unsupported value: NaN" errors.
+func (s *SNRStats) Sanitise() *SNRStats {
+	s.AvgDB = sanitiseFloat(s.AvgDB)
+	s.MinDB = sanitiseFloat(s.MinDB)
+	s.MaxDB = sanitiseFloat(s.MaxDB)
+	s.BasebandAvg = sanitiseFloat(s.BasebandAvg)
+	s.NoiseAvg = sanitiseFloat(s.NoiseAvg)
+	return s
+}
+
 type snrSample struct {
 	snrDB float32
 	bb    float32
@@ -146,7 +166,7 @@ func (a *snrAccumulator) drain() SNRStats {
 	}
 	fn := float32(n)
 	a.samples = a.samples[:0]
-	return SNRStats{
+	s := SNRStats{
 		Count:       n,
 		AvgDB:       sumSNR / fn,
 		MinDB:       minSNR,
@@ -154,6 +174,8 @@ func (a *snrAccumulator) drain() SNRStats {
 		BasebandAvg: sumBB / fn,
 		NoiseAvg:    sumN / fn,
 	}
+	s.Sanitise()
+	return s
 }
 
 // peek returns stats without resetting.
@@ -179,7 +201,7 @@ func (a *snrAccumulator) peek() SNRStats {
 		}
 	}
 	fn := float32(n)
-	return SNRStats{
+	s := SNRStats{
 		Count:       n,
 		AvgDB:       sumSNR / fn,
 		MinDB:       minSNR,
@@ -187,6 +209,8 @@ func (a *snrAccumulator) peek() SNRStats {
 		BasebandAvg: sumBB / fn,
 		NoiseAvg:    sumN / fn,
 	}
+	s.Sanitise()
+	return s
 }
 
 // ---------------------------------------------------------------------------

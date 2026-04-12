@@ -465,34 +465,36 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
   inset: 0;
   background: rgba(0,0,0,0.85);
   z-index: 200;
+  overflow: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding: 48px 16px 16px;
 }
 
 #lightbox-body {
   position: relative;
-  max-width: 95vw;
-  max-height: 95vh;
+  flex-shrink: 0;
 }
 
 #lightbox-img {
   display: block;
-  max-width: 95vw;
-  max-height: 90vh;
   image-rendering: pixelated;
+  /* Show at native pixel size — no scaling */
 }
 
 #lightbox-close {
-  position: absolute;
-  top: -36px;
-  right: 0;
-  background: transparent;
-  border: none;
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid #555;
   color: #fff;
   font-size: 22px;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  z-index: 201;
 }
 
 /* ── Utility ── */

@@ -157,8 +157,10 @@ function renderStatusBadges() {
     badge.title = ch.label;
     // Click badge to switch channel filter (dispatches 'change' which also
     // calls syncAudioToChannel via the channel-select change handler).
+    // Also close any open detail view so the live panel is shown.
     badge.style.cursor = 'pointer';
     badge.addEventListener('click', () => {
+      closeDetail();
       const sel = document.getElementById('channel-select');
       sel.value = ch.label;
       sel.dispatchEvent(new Event('change'));

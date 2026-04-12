@@ -175,8 +175,8 @@ select:focus { outline: 2px solid var(--accent); }
 .thumb-card:hover { border-color: var(--accent); }
 .thumb-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent2); }
 
-.thumb-img-wrap { width: 100%; background: #111; }
-.thumb-img { width: 100%; display: block; image-rendering: pixelated; }
+.thumb-img-wrap { width: 100%; background: #111; overflow: hidden; }
+.thumb-img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
 
 .thumb-meta {
   padding: 6px 8px;

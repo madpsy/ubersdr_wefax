@@ -660,12 +660,9 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 				continue
 			}
 			switch m.Type {
-			case "error":
-				log.Printf("[%s] server error: %s", inst.label, m.Error)
-				inst.mu.Lock()
-				inst.running = false
-				inst.mu.Unlock()
-				return false
+				case "error":
+					log.Printf("[%s] server error: %s", inst.label, m.Error)
+					return true
 			case "status":
 				log.Printf("[%s] status: session=%s freq=%d mode=%s",
 					inst.label, m.SessionID, m.Frequency, m.Mode)

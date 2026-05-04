@@ -39,6 +39,12 @@ services:
       - sdr-network
     volumes:
       - ./wefax-images:/data
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: "127.0.0.1:24224"
+        fluentd-async: "true"
+        tag: "wefax"
 
 networks:
   sdr-network:

@@ -234,8 +234,8 @@ let snrLabel = '';
 
 // Live SNR sparkline (badges-bar chart) — exact port from ubersdr_qsstv
 const LIVE_SNR_MAX_POINTS = 120; // ~30 s at ~4 Hz SNR cadence
-const LIVE_SNR_MIN = 30;
-const LIVE_SNR_MAX = 80;
+const LIVE_SNR_MIN = 25;  // WEFAX HF signals typically 30–55 dB
+const LIVE_SNR_MAX = 60;  // lower ceiling than qsstv (SSTV is typically 50–80 dB)
 let liveSNRChart = null;
 let liveSNRData  = []; // plain dB numbers; re-indexed as {x,y} on each update
 
@@ -995,9 +995,14 @@ function connectSSE() {
     liveBarCurrentLine++;
     const barCanvas = document.getElementById('live-snr-bar');
     if (barCanvas && barCanvas.style.display !== 'none') {
-      // Match bar height to the live canvas height.
+      // Set canvas pixel dimensions to match the live canvas exactly.
+      // We set both the attribute (pixel buffer) and the CSS height so that
+      // offsetHeight is correct and renderSNRBar draws at the right size.
       const lc = document.getElementById('live-canvas');
-      barCanvas.style.height = lc.height + 'px';
+      const h = lc.height;   // canvas pixel-buffer height (grows in 200px steps)
+      barCanvas.width  = 10;
+      barCanvas.height = h;
+      barCanvas.style.height = h + 'px';
       // totalLines=0 → fillFraction=1 (bar always fills fully; no known frame height)
       renderSNRBar(barCanvas, liveBarSNRValues, 0, liveBarCurrentLine);
     }
@@ -1031,19 +1036,11 @@ function connectSSE() {
     // When "all" is selected, follow the live channel for SNR.
     if (!activeLabel) connectSNR(data.label);
 
-    // Show the live SNR bar and attach a ResizeObserver so it tracks the
-    // canvas height as new lines are appended (canvas grows in 200px chunks).
+    // Show the live SNR bar. Dimensions are set explicitly on every fax_line
+    // so no ResizeObserver is needed.
     const barCanvas = document.getElementById('live-snr-bar');
     if (barCanvas) {
       barCanvas.style.display = 'block';
-      if (liveBarRO) liveBarRO.disconnect();
-      liveBarRO = new ResizeObserver(() => {
-        const lc = document.getElementById('live-canvas');
-        if (!lc) return;
-        barCanvas.style.height = lc.height + 'px';
-        renderSNRBar(barCanvas, liveBarSNRValues, 0, liveBarCurrentLine);
-      });
-      liveBarRO.observe(document.getElementById('live-canvas'));
     }
   });
 
@@ -1459,17 +1456,6 @@ function connectFFT(label) {
 
 function disconnectFFT() {
   if (fftES) { fftES.close(); fftES = null; }
-}
-
-// ---------------------------------------------------------------------------
-// SNR colour: red at 30 dB → orange at 40 dB → green at 50+ dB
-// Matches ubersdr_qsstv snrColor() exactly.
-// ---------------------------------------------------------------------------
-function snrColor(snrDB) {
-  // Clamp to [30, 50] then map to hue [0°=red, 120°=green]
-  const t = Math.max(0, Math.min(1, (snrDB - 30) / 20));
-  const hue = Math.round(t * 120); // 0 → 120
-  return `hsl(${hue}, 100%, 50%)`;
 }
 
 // ---------------------------------------------------------------------------

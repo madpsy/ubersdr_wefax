@@ -679,6 +679,21 @@ function drawSNRBar(id, snrValues, totalLines, filledLines, imageEl) {
   renderSNRBar(canvas, snrValues, totalLines, filledLines != null ? filledLines : snrValues.length);
 }
 
+// drawSNRBarFixed: render snrValues into a named SNR bar canvas at an explicit pixel height.
+// Used for live mode where the bar height is computed directly from rendered line height
+// to avoid fill-fraction jumps when liveCanvas.height grows in 200-line chunks.
+// The bar always fills 100% of the given height (totalLines == filledLines == snrValues.length).
+function drawSNRBarFixed(id, snrValues, barHeightPx) {
+  const canvas = document.getElementById(id);
+  if (!canvas || barHeightPx <= 0) return;
+  const w = canvas.offsetWidth || 14;
+  canvas.style.height = barHeightPx + 'px';
+  canvas.width  = w;
+  canvas.height = barHeightPx;
+  // Pass snrValues.length as both totalLines and filledLines → fillFraction = 1 always.
+  renderSNRBar(canvas, snrValues, snrValues.length, snrValues.length);
+}
+
 // clearSNRBar: blank a named SNR bar canvas.
 function clearSNRBar(id) {
   const canvas = document.getElementById(id);
@@ -998,12 +1013,19 @@ function connectSSE() {
     appendLiveLine(pixels);
 
     // Sample current SNR and redraw the live bar.
-    // Pass liveCanvas as imageEl so the bar height matches the rendered canvas height.
-    // totalLines=liveCanvas.height, filledLines=liveBarCurrentLine gives correct fill fraction.
+    // Compute the rendered height of the lines received so far:
+    //   renderedLineH = rendered canvas height / canvas pixel height
+    //   barH = renderedLineH * liveBarCurrentLine
+    // This avoids the 200-line chunk jump in liveCanvas.height causing fill fraction to halve.
     liveBarSNRValues.push(latestLiveSNR !== null ? latestLiveSNR : 30);
     liveBarCurrentLine++;
-    const liveCanvasH = liveCanvas ? liveCanvas.height : 0;
-    drawSNRBar('live-snr-bar', liveBarSNRValues, liveCanvasH, liveBarCurrentLine, liveCanvas);
+    if (liveCanvas) {
+      const renderedCanvasH = liveCanvas.getBoundingClientRect().height;
+      const pixelH = liveCanvas.height || 1;
+      const renderedLineH = renderedCanvasH / pixelH;
+      const barH = Math.round(renderedLineH * liveBarCurrentLine);
+      drawSNRBarFixed('live-snr-bar', liveBarSNRValues, barH);
+    }
   });
 
   sseSource.addEventListener('channel_start', e => {

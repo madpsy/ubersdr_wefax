@@ -166,7 +166,8 @@ select:focus { outline: 2px solid var(--accent); }
   display: block;
   width: 14px;
   flex-shrink: 0;
-  align-self: stretch;
+  align-self: flex-start;
+  margin-top: 8px;   /* match #live-canvas-wrap / #detail-image-wrap padding */
   background: var(--bg2);
   border-left: 1px solid var(--border);
 }

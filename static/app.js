@@ -660,12 +660,20 @@ function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
 //   snrValues  — array of SNR dB numbers
 //   totalLines — full image height in lines (0 = fill whole bar)
 //   filledLines— lines decoded so far
-function drawSNRBar(id, snrValues, totalLines, filledLines) {
+//   imageEl    — the image/canvas element whose rendered height the bar should match
+function drawSNRBar(id, snrValues, totalLines, filledLines, imageEl) {
   const canvas = document.getElementById(id);
   if (!canvas) return;
-  // Size the canvas pixel buffer to match the CSS layout size.
-  const w = canvas.offsetWidth  || 14;
-  const h = canvas.offsetHeight || canvas.parentElement.offsetHeight || 200;
+  const w = canvas.offsetWidth || 14;
+  // Match bar height to the rendered height of the image element.
+  // getBoundingClientRect() gives the actual CSS-scaled height.
+  let h = 0;
+  if (imageEl) {
+    h = Math.round(imageEl.getBoundingClientRect().height);
+  }
+  if (h <= 0) h = canvas.offsetHeight || 200;
+  // Set CSS height so the canvas element occupies exactly that space.
+  canvas.style.height = h + 'px';
   canvas.width  = w;
   canvas.height = h;
   renderSNRBar(canvas, snrValues, totalLines, filledLines != null ? filledLines : snrValues.length);
@@ -753,7 +761,15 @@ function selectRecord(id) {
   const snrValues = (snr.series && snr.series.length > 0)
     ? snr.series.map(p => p.snr_db)
     : [];
-  drawSNRBar('detail-snr-bar', snrValues, rec.image_height || 0, rec.lines_decoded || 0);
+  // Draw after the image has loaded so getBoundingClientRect() returns the rendered height.
+  const detailImg = document.getElementById('detail-img');
+  const _drawDetailBar = () =>
+    drawSNRBar('detail-snr-bar', snrValues, rec.image_height || 0, rec.lines_decoded || 0, detailImg);
+  if (detailImg.complete && detailImg.naturalHeight > 0) {
+    _drawDetailBar();
+  } else {
+    detailImg.addEventListener('load', _drawDetailBar, { once: true });
+  }
 
   updateDetailNav();
 }
@@ -982,12 +998,12 @@ function connectSSE() {
     appendLiveLine(pixels);
 
     // Sample current SNR and redraw the live bar.
-    // Use liveCanvas.height as totalLines so the bar only fills the proportion
-    // of the canvas that has been drawn — it grows line-by-line from the top.
+    // Pass liveCanvas as imageEl so the bar height matches the rendered canvas height.
+    // totalLines=liveCanvas.height, filledLines=liveBarCurrentLine gives correct fill fraction.
     liveBarSNRValues.push(latestLiveSNR !== null ? latestLiveSNR : 30);
     liveBarCurrentLine++;
     const liveCanvasH = liveCanvas ? liveCanvas.height : 0;
-    drawSNRBar('live-snr-bar', liveBarSNRValues, liveCanvasH, liveBarCurrentLine);
+    drawSNRBar('live-snr-bar', liveBarSNRValues, liveCanvasH, liveBarCurrentLine, liveCanvas);
   });
 
   sseSource.addEventListener('channel_start', e => {

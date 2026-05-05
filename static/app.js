@@ -364,6 +364,8 @@ document.getElementById('channel-select').addEventListener('change', function ()
       liveDrawingLabel = activeLabel;
       document.getElementById('live-label').textContent =
         `Live: ${fmtFreq(ch.freq_hz)} — ${ch.label}`;
+      // Show the SNR bar for the mid-reception join.
+      showLiveSNRBar();
       // Replay buffered rows so the user sees the image so far.
       replayLiveCanvas(activeLabel);
     } else {
@@ -653,14 +655,31 @@ function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
   }
 }
 
-// ResizeObserver handle for the detail SNR bar — disconnected on each new image.
-let detailSNRBarRO = null;
+// drawSNRColumn: render snrValues into the full-height #snr-column-bar canvas.
+// Pass totalLines=0 and filledLines=0 to fill the whole column (live mode).
+function drawSNRColumn(snrValues, totalLines, filledLines) {
+  const canvas = document.getElementById('snr-column-bar');
+  if (!canvas) return;
+  // Size the canvas pixel buffer to match the CSS layout size of the column.
+  const w = canvas.offsetWidth  || 14;
+  const h = canvas.offsetHeight || canvas.parentElement.offsetHeight || 200;
+  canvas.width  = w;
+  canvas.height = h;
+  renderSNRBar(canvas, snrValues, totalLines, filledLines || snrValues.length);
+}
+
+// clearSNRColumn: blank the column canvas (called on reset / no data).
+function clearSNRColumn() {
+  const canvas = document.getElementById('snr-column-bar');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
 
 // Live SNR bar state
 let latestLiveSNR    = null;  // most-recent avg_db from the SNR SSE stream
 let liveBarSNRValues = [];    // one entry per fax_line received
-let liveBarCurrentLine = 0;   // same as liveLineCount but tracked independently
-let liveBarRO        = null;  // ResizeObserver watching #live-canvas height
+let liveBarCurrentLine = 0;   // lines received so far in this reception
 
 // ---------------------------------------------------------------------------
 // Detail view
@@ -726,42 +745,12 @@ function selectRecord(id) {
     <tr><th>Size</th><td>${rec.width} × ${rec.lines} px</td></tr>
     ${snrRow}`;
 
-  // SNR quality bar — vertical strip beside the image.
+  // SNR quality bar — drawn into the full-height #snr-column-bar canvas.
   // snr.series is an array of {t, snr_db} 1-second buckets (absent on old sidecars).
-  const barCanvas = document.getElementById('detail-snr-bar');
   const snrValues = (snr.series && snr.series.length > 0)
     ? snr.series.map(p => p.snr_db)
     : [];
-
-  // Disconnect any previous ResizeObserver before attaching a new one.
-  if (detailSNRBarRO) { detailSNRBarRO.disconnect(); detailSNRBarRO = null; }
-
-  if (snrValues.length > 0 && barCanvas) {
-    barCanvas.style.display = 'block';
-    const img = document.getElementById('detail-img');
-
-    function drawBar() {
-      const h = img.offsetHeight;
-      if (h > 0) {
-        barCanvas.style.height = h + 'px';
-        renderSNRBar(barCanvas, snrValues, rec.image_height || 0, rec.lines_decoded || undefined);
-      }
-    }
-
-    img.onload = () => {
-      drawBar();
-      detailSNRBarRO = new ResizeObserver(drawBar);
-      detailSNRBarRO.observe(img);
-    };
-    // Image may already be cached — draw immediately if so.
-    if (img.complete && img.naturalHeight > 0) {
-      drawBar();
-      detailSNRBarRO = new ResizeObserver(drawBar);
-      detailSNRBarRO.observe(img);
-    }
-  } else if (barCanvas) {
-    barCanvas.style.display = 'none';
-  }
+  drawSNRColumn(snrValues, rec.image_height || 0, rec.lines_decoded || 0);
 
   updateDetailNav();
 }
@@ -771,6 +760,12 @@ function closeDetail() {
   document.getElementById('detail-view').classList.add('hidden');
   document.getElementById('live-panel').classList.remove('hidden');
   document.querySelectorAll('.thumb-card').forEach(c => c.classList.remove('selected'));
+  // Restore live bar state in the SNR column (or clear if no live data).
+  if (liveBarSNRValues.length > 0) {
+    drawSNRColumn(liveBarSNRValues, 0, liveBarCurrentLine);
+  } else {
+    clearSNRColumn();
+  }
 }
 
 function updateDetailNav() {
@@ -942,17 +937,14 @@ function resetLiveCanvas() {
   c.height = 1;
   document.getElementById('live-line-count').textContent = '';
 
-  // Reset live SNR bar state.
+  // Reset live SNR bar state and clear the column.
   liveBarSNRValues = [];
   liveBarCurrentLine = 0;
-  if (liveBarRO) { liveBarRO.disconnect(); liveBarRO = null; }
-  const barCanvas = document.getElementById('live-snr-bar');
-  if (barCanvas) {
-    barCanvas.style.display = 'none';
-    const bctx = barCanvas.getContext('2d');
-    bctx.clearRect(0, 0, barCanvas.width, barCanvas.height);
-  }
+  clearSNRColumn();
 }
+
+// showLiveSNRBar: no-op — the SNR column is always visible in the layout.
+function showLiveSNRBar() {}
 
 // ---------------------------------------------------------------------------
 // SSE
@@ -990,22 +982,11 @@ function connectSSE() {
 
     appendLiveLine(pixels);
 
-    // Sample current SNR for the live bar.
+    // Sample current SNR and redraw the column bar.
     liveBarSNRValues.push(latestLiveSNR !== null ? latestLiveSNR : 30);
     liveBarCurrentLine++;
-    const barCanvas = document.getElementById('live-snr-bar');
-    if (barCanvas && barCanvas.style.display !== 'none') {
-      // Set canvas pixel dimensions to match the live canvas exactly.
-      // We set both the attribute (pixel buffer) and the CSS height so that
-      // offsetHeight is correct and renderSNRBar draws at the right size.
-      const lc = document.getElementById('live-canvas');
-      const h = lc.height;   // canvas pixel-buffer height (grows in 200px steps)
-      barCanvas.width  = 10;
-      barCanvas.height = h;
-      barCanvas.style.height = h + 'px';
-      // totalLines=0 → fillFraction=1 (bar always fills fully; no known frame height)
-      renderSNRBar(barCanvas, liveBarSNRValues, 0, liveBarCurrentLine);
-    }
+    // totalLines=0 → fillFraction=1 (bar always fills fully; no known frame height)
+    drawSNRColumn(liveBarSNRValues, 0, liveBarCurrentLine);
   });
 
   sseSource.addEventListener('channel_start', e => {
@@ -1035,13 +1016,6 @@ function connectSSE() {
     }
     // When "all" is selected, follow the live channel for SNR.
     if (!activeLabel) connectSNR(data.label);
-
-    // Show the live SNR bar. Dimensions are set explicitly on every fax_line
-    // so no ResizeObserver is needed.
-    const barCanvas = document.getElementById('live-snr-bar');
-    if (barCanvas) {
-      barCanvas.style.display = 'block';
-    }
   });
 
   sseSource.addEventListener('channel_stop', e => {
@@ -1058,8 +1032,7 @@ function connectSSE() {
       document.getElementById('live-label').textContent = 'Waiting for signal…';
       // Disconnect SNR when "all" mode loses its live channel.
       if (!activeLabel) disconnectSNR();
-      // Disconnect the bar ResizeObserver — bar stays visible showing final state.
-      if (liveBarRO) { liveBarRO.disconnect(); liveBarRO = null; }
+      // SNR column bar stays showing the final state — cleared on next channel_start.
     }
   });
 

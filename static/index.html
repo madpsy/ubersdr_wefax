@@ -74,7 +74,6 @@
         </div>
         <div id="live-canvas-wrap">
           <canvas id="live-canvas"></canvas>
-          <canvas id="live-snr-bar" class="live-snr-bar" title="SNR quality (red=poor → green=good)"></canvas>
         </div>
       </div>
 
@@ -91,7 +90,6 @@
         <div id="detail-body">
           <div id="detail-image-wrap">
             <img id="detail-img" src="" alt="Fax image" />
-            <canvas id="detail-snr-bar" class="detail-snr-bar" title="SNR quality (red=poor → green=good)"></canvas>
           </div>
           <div id="detail-sidebar">
             <div id="detail-meta">
@@ -104,6 +102,11 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- ── SNR column — thin bar between detail and audio panels ── -->
+    <div id="snr-column" title="SNR quality (red=poor → green=good)">
+      <canvas id="snr-column-bar"></canvas>
     </div>
 
     <!-- ── Right: audio preview panel ── -->

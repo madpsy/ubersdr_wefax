@@ -1566,8 +1566,20 @@ function updateSNRDisplay(stats) {
   barEl.style.backgroundColor = snrColor(snr);
 }
 
+function resetLiveSNRChart() {
+  liveSNRData = [];
+  const valueEl = document.getElementById('live-snr-value');
+  if (valueEl) { valueEl.textContent = '—'; valueEl.style.color = ''; }
+  if (liveSNRChart) {
+    liveSNRChart.data.datasets[0].data = [];
+    liveSNRChart.update('none');
+  }
+}
+
 function connectSNR(label) {
   if (snrES) { snrES.close(); snrES = null; }
+  // Clear sparkline history whenever we switch channels.
+  resetLiveSNRChart();
   // Reset display when no channel selected.
   if (!label) { updateSNRDisplay(null); return; }
   snrLabel = label;
@@ -1585,6 +1597,7 @@ function connectSNR(label) {
 
 function disconnectSNR() {
   if (snrES) { snrES.close(); snrES = null; }
+  resetLiveSNRChart();
   updateSNRDisplay(null);
 }
 

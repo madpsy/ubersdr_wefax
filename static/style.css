@@ -15,7 +15,7 @@
   --success:   #52c07a;
   --warn:      #e0a052;
   --header-h:  52px;
-  --badges-h:  34px;
+  --badges-h:  48px;
   --top-h:     calc(var(--header-h) + var(--badges-h));
 }
 

@@ -36,6 +36,11 @@ type imageRecord struct {
 	Filename  string    `json:"filename"`   // PNG filename (basename)
 	ThumbFile string    `json:"thumb_file"` // thumbnail filename (basename)
 	SNR       SNRStats  `json:"snr"`        // signal quality over the receive
+	// Decode completeness — how many lines were decoded vs. the expected full
+	// frame height.  Used by the frontend to scale the SNR quality bar.
+	// Old sidecars without these fields read back as 0 (omitempty).
+	ImageHeight  int `json:"image_height,omitempty"`
+	LinesDecoded int `json:"lines_decoded,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -232,17 +237,19 @@ func saveImage(img *inProgressImage, store *imageStore, hub *sseHub) error {
 	}
 
 	rec := &imageRecord{
-		ID:        id,
-		Label:     img.label,
-		FreqHz:    img.freqHz,
-		AudioMode: img.audioMode,
-		StartedAt: img.startedAt,
-		SavedAt:   ts,
-		Lines:     height,
-		Width:     width,
-		Filename:  pngName,
-		ThumbFile: thumbName,
-		SNR:       img.snr,
+		ID:           id,
+		Label:        img.label,
+		FreqHz:       img.freqHz,
+		AudioMode:    img.audioMode,
+		StartedAt:    img.startedAt,
+		SavedAt:      ts,
+		Lines:        height,
+		Width:        width,
+		Filename:     pngName,
+		ThumbFile:    thumbName,
+		SNR:          img.snr,
+		ImageHeight:  height,
+		LinesDecoded: height,
 	}
 
 	// Write JSON sidecar atomically: marshal → temp file → rename, so a

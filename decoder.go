@@ -193,10 +193,10 @@ func NewWEFAXDecoder(sampleRate int, config WEFAXConfig) *WEFAXDecoder {
 		usePhasing:               config.UsePhasing,
 		autoStop:                 config.AutoStop,
 		autoStart:                config.AutoStart,
-		// Start as if already triggered so lines flow immediately.
-		// A STOP tone will reset this to false; a subsequent START tone
-		// will set it back to true — preserving normal image boundaries.
-		autoStarted:           config.AutoStart,
+		// Start with autoStarted=false so lines are only captured after a
+		// real START tone is detected.  This prevents garbage pre-signal
+		// data from accumulating into an unbounded image.
+		autoStarted:           false,
 		samplesPerSecNom:      float64(sampleRate),
 		samplesPerSecFrac:     float64(sampleRate),
 		samplesPerSecFracPrev: float64(sampleRate),
@@ -233,7 +233,7 @@ func NewWEFAXDecoder(sampleRate int, config WEFAXConfig) *WEFAXDecoder {
 		d.lpm, d.imageWidth, d.carrier, d.deviation, d.samplesPerLine)
 
 	if d.autoStart {
-		log.Printf("[WEFAX] Auto-start enabled — waiting for START signal before decoding")
+		log.Printf("[WEFAX] Auto-start enabled — lines will only flow after a START tone")
 	}
 
 	return d
@@ -352,7 +352,7 @@ func (d *WEFAXDecoder) decodeFaxLine(resultChan chan<- []byte) {
 		leewayLines := 4
 		threshold := d.startStopLength*d.lpm/60 - leewayLines
 
-		if d.typeCount == threshold {
+		if d.typeCount >= threshold {
 			if lineType == HeaderStart {
 				// When autoStart is enabled and we are already decoding (autoStarted==true),
 				// this is a false positive from the tone detector — image content can

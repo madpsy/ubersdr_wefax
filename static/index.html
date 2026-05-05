@@ -44,6 +44,11 @@
   <!-- Channel status badges — own row below header so they never overlap content -->
   <div id="badges-bar">
     <div id="status-badges" aria-live="polite"></div>
+    <div id="live-snr-widget">
+      <span id="live-snr-label">SNR</span>
+      <canvas id="live-snr-chart" width="200" height="36"></canvas>
+      <span id="live-snr-value">—</span>
+    </div>
   </div>
 
   <div class="main-layout">
@@ -69,6 +74,7 @@
         </div>
         <div id="live-canvas-wrap">
           <canvas id="live-canvas"></canvas>
+          <canvas id="live-snr-bar" class="live-snr-bar" title="SNR quality (red=poor → green=good)"></canvas>
         </div>
       </div>
 
@@ -85,6 +91,7 @@
         <div id="detail-body">
           <div id="detail-image-wrap">
             <img id="detail-img" src="" alt="Fax image" />
+            <canvas id="detail-snr-bar" class="detail-snr-bar" title="SNR quality (red=poor → green=good)"></canvas>
           </div>
           <div id="detail-sidebar">
             <div id="detail-meta">

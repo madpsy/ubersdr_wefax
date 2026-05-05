@@ -232,6 +232,13 @@ let fftLabel = '';
 let snrES = null;
 let snrLabel = '';
 
+// Live SNR sparkline (badges-bar chart) — exact port from ubersdr_qsstv
+const LIVE_SNR_MAX_POINTS = 120; // ~30 s at ~4 Hz SNR cadence
+const LIVE_SNR_MIN = 30;
+const LIVE_SNR_MAX = 80;
+let liveSNRChart = null;
+let liveSNRData  = []; // plain dB numbers; re-indexed as {x,y} on each update
+
 // SSE
 let sseSource = null;
 
@@ -574,6 +581,88 @@ function buildThumbCard(rec) {
 })();
 
 // ---------------------------------------------------------------------------
+// SNR colour + quality bar (ported from ubersdr_qsstv)
+// ---------------------------------------------------------------------------
+
+// snrColor: maps an SNR dB value to a CSS colour string.
+// red at ≤30 dB → orange at 40 dB → green at ≥50 dB
+// Identical to ubersdr_qsstv app.js snrColor().
+function snrColor(snrDB) {
+  // Clamp to [30, 50] then map to hue [0°=red, 120°=green]
+  const t = Math.max(0, Math.min(1, (snrDB - 30) / 20));
+  const hue = Math.round(t * 120); // 0 → 120
+  return `hsl(${hue}, 100%, 50%)`;
+}
+
+// renderSNRBar: draws a colour-scaled vertical gradient on a <canvas>.
+//   canvas      — the <canvas> element
+//   snrValues   — array of SNR dB numbers, index 0 = top of image (earliest)
+//   totalLines  — full image height in lines (denominator for fill fraction)
+//   filledLines — lines actually decoded (numerator); defaults to snrValues.length
+// Identical to ubersdr_qsstv app.js renderSNRBar().
+function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
+  if (!canvas || !snrValues || snrValues.length === 0) {
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
+  const h = canvas.offsetHeight || canvas.height || 200;
+  const w = canvas.offsetWidth  || canvas.width  || 10;
+  canvas.width  = w;
+  canvas.height = h;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+
+  const n = snrValues.length;
+  // filledLines is the authoritative "how far down" count.
+  // Fall back to snrValues.length if not provided.
+  const filled = (filledLines != null && filledLines > 0) ? filledLines : n;
+  // How far down the bar the received data reaches (0–1).
+  const fillFraction = (totalLines && totalLines > 0)
+    ? Math.min(1, filled / totalLines)
+    : 1;
+  const filledH = Math.round(h * fillFraction);
+
+  if (filledH <= 0) return;
+
+  // Build a linear gradient from top to bottom of the filled region.
+  // Each SNR sample contributes one colour stop.
+  const grad = ctx.createLinearGradient(0, 0, 0, filledH);
+  for (let i = 0; i < n; i++) {
+    const stop = i / Math.max(n - 1, 1);
+    grad.addColorStop(stop, snrColor(snrValues[i]));
+  }
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  // Rounded rectangle for the filled portion
+  const r = Math.min(4, w / 2);
+  ctx.roundRect(0, 0, w, filledH, r);
+  ctx.fill();
+
+  // Unfilled portion (below received data) — dark placeholder
+  if (filledH < h) {
+    ctx.fillStyle = 'rgba(15,52,96,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(0, filledH, w, h - filledH, r);
+    ctx.fill();
+  }
+}
+
+// ResizeObserver handle for the detail SNR bar — disconnected on each new image.
+let detailSNRBarRO = null;
+
+// Live SNR bar state
+let latestLiveSNR    = null;  // most-recent avg_db from the SNR SSE stream
+let liveBarSNRValues = [];    // one entry per fax_line received
+let liveBarCurrentLine = 0;   // same as liveLineCount but tracked independently
+let liveBarRO        = null;  // ResizeObserver watching #live-canvas height
+
+// ---------------------------------------------------------------------------
 // Detail view
 // ---------------------------------------------------------------------------
 
@@ -616,9 +705,12 @@ function selectRecord(id) {
 
   const table = document.getElementById('detail-meta-table');
   const snr = rec.snr || {};
+  const snrAvgStyle = snr.avg_db != null ? ` style="color:${snrColor(snr.avg_db)}"` : '';
+  const snrMinStyle = snr.min_db != null ? ` style="color:${snrColor(snr.min_db)}"` : '';
+  const snrMaxStyle = snr.max_db != null ? ` style="color:${snrColor(snr.max_db)}"` : '';
   const snrRow = snr.count > 0
-    ? `<tr><th>SNR avg</th><td>${snr.avg_db != null ? snr.avg_db.toFixed(1) + ' dB' : '—'}</td></tr>
-       <tr><th>SNR min/max</th><td>${snr.min_db != null ? snr.min_db.toFixed(1) : '—'} / ${snr.max_db != null ? snr.max_db.toFixed(1) : '—'} dB</td></tr>
+    ? `<tr><th>SNR avg</th><td${snrAvgStyle}>${snr.avg_db != null ? snr.avg_db.toFixed(1) + ' dB' : '—'}</td></tr>
+       <tr><th>SNR min/max</th><td><span${snrMinStyle}>${snr.min_db != null ? snr.min_db.toFixed(1) : '—'}</span> / <span${snrMaxStyle}>${snr.max_db != null ? snr.max_db.toFixed(1) : '—'}</span> dB</td></tr>
        <tr><th>Baseband</th><td>${snr.baseband_avg_dbfs != null ? snr.baseband_avg_dbfs.toFixed(1) + ' dBFS' : '—'}</td></tr>
        <tr><th>Noise floor</th><td>${snr.noise_avg_dbfs != null ? snr.noise_avg_dbfs.toFixed(1) + ' dBFS' : '—'}</td></tr>
        <tr><th>SNR samples</th><td>${snr.count}</td></tr>`
@@ -633,6 +725,43 @@ function selectRecord(id) {
     <tr><th>Duration</th><td>${fmtDuration(rec.started_at, rec.saved_at)}</td></tr>
     <tr><th>Size</th><td>${rec.width} × ${rec.lines} px</td></tr>
     ${snrRow}`;
+
+  // SNR quality bar — vertical strip beside the image.
+  // snr.series is an array of {t, snr_db} 1-second buckets (absent on old sidecars).
+  const barCanvas = document.getElementById('detail-snr-bar');
+  const snrValues = (snr.series && snr.series.length > 0)
+    ? snr.series.map(p => p.snr_db)
+    : [];
+
+  // Disconnect any previous ResizeObserver before attaching a new one.
+  if (detailSNRBarRO) { detailSNRBarRO.disconnect(); detailSNRBarRO = null; }
+
+  if (snrValues.length > 0 && barCanvas) {
+    barCanvas.style.display = 'block';
+    const img = document.getElementById('detail-img');
+
+    function drawBar() {
+      const h = img.offsetHeight;
+      if (h > 0) {
+        barCanvas.style.height = h + 'px';
+        renderSNRBar(barCanvas, snrValues, rec.image_height || 0, rec.lines_decoded || undefined);
+      }
+    }
+
+    img.onload = () => {
+      drawBar();
+      detailSNRBarRO = new ResizeObserver(drawBar);
+      detailSNRBarRO.observe(img);
+    };
+    // Image may already be cached — draw immediately if so.
+    if (img.complete && img.naturalHeight > 0) {
+      drawBar();
+      detailSNRBarRO = new ResizeObserver(drawBar);
+      detailSNRBarRO.observe(img);
+    }
+  } else if (barCanvas) {
+    barCanvas.style.display = 'none';
+  }
 
   updateDetailNav();
 }
@@ -812,6 +941,17 @@ function resetLiveCanvas() {
   c.width = 1;
   c.height = 1;
   document.getElementById('live-line-count').textContent = '';
+
+  // Reset live SNR bar state.
+  liveBarSNRValues = [];
+  liveBarCurrentLine = 0;
+  if (liveBarRO) { liveBarRO.disconnect(); liveBarRO = null; }
+  const barCanvas = document.getElementById('live-snr-bar');
+  if (barCanvas) {
+    barCanvas.style.display = 'none';
+    const bctx = barCanvas.getContext('2d');
+    bctx.clearRect(0, 0, barCanvas.width, barCanvas.height);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -849,6 +989,18 @@ function connectSSE() {
     for (let i = 0; i < bin.length; i++) pixels[i] = bin.charCodeAt(i);
 
     appendLiveLine(pixels);
+
+    // Sample current SNR for the live bar.
+    liveBarSNRValues.push(latestLiveSNR !== null ? latestLiveSNR : 30);
+    liveBarCurrentLine++;
+    const barCanvas = document.getElementById('live-snr-bar');
+    if (barCanvas && barCanvas.style.display !== 'none') {
+      // Match bar height to the live canvas height.
+      const lc = document.getElementById('live-canvas');
+      barCanvas.style.height = lc.height + 'px';
+      // totalLines=0 → fillFraction=1 (bar always fills fully; no known frame height)
+      renderSNRBar(barCanvas, liveBarSNRValues, 0, liveBarCurrentLine);
+    }
   });
 
   sseSource.addEventListener('channel_start', e => {
@@ -878,6 +1030,21 @@ function connectSSE() {
     }
     // When "all" is selected, follow the live channel for SNR.
     if (!activeLabel) connectSNR(data.label);
+
+    // Show the live SNR bar and attach a ResizeObserver so it tracks the
+    // canvas height as new lines are appended (canvas grows in 200px chunks).
+    const barCanvas = document.getElementById('live-snr-bar');
+    if (barCanvas) {
+      barCanvas.style.display = 'block';
+      if (liveBarRO) liveBarRO.disconnect();
+      liveBarRO = new ResizeObserver(() => {
+        const lc = document.getElementById('live-canvas');
+        if (!lc) return;
+        barCanvas.style.height = lc.height + 'px';
+        renderSNRBar(barCanvas, liveBarSNRValues, 0, liveBarCurrentLine);
+      });
+      liveBarRO.observe(document.getElementById('live-canvas'));
+    }
   });
 
   sseSource.addEventListener('channel_stop', e => {
@@ -894,6 +1061,8 @@ function connectSSE() {
       document.getElementById('live-label').textContent = 'Waiting for signal…';
       // Disconnect SNR when "all" mode loses its live channel.
       if (!activeLabel) disconnectSNR();
+      // Disconnect the bar ResizeObserver — bar stays visible showing final state.
+      if (liveBarRO) { liveBarRO.disconnect(); liveBarRO = null; }
     }
   });
 
@@ -1304,6 +1473,72 @@ function snrColor(snrDB) {
 }
 
 // ---------------------------------------------------------------------------
+// Live SNR sparkline — scrolling 30-second chart in the badges bar.
+// Exact port of ubersdr_qsstv initLiveSNRChart() / pushLiveSNR().
+// ---------------------------------------------------------------------------
+
+function initLiveSNRChart() {
+  const canvas = document.getElementById('live-snr-chart');
+  if (!canvas) return;
+  liveSNRChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      datasets: [{
+        data: [],
+        borderColor: '#6fcf97',
+        backgroundColor: 'rgba(111,207,151,0.15)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        borderWidth: 1.5,
+      }],
+    },
+    options: {
+      responsive: false,
+      animation: false,
+      parsing: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: {
+          display: false,
+          type: 'linear',
+          min: 0,
+          max: LIVE_SNR_MAX_POINTS - 1,
+        },
+        y: {
+          display: false,
+          min: LIVE_SNR_MIN,
+          max: LIVE_SNR_MAX,
+        },
+      },
+    },
+  });
+}
+
+function pushLiveSNR(snrDB) {
+  liveSNRData.push(snrDB);
+  if (liveSNRData.length > LIVE_SNR_MAX_POINTS) liveSNRData.shift();
+
+  // Update numeric value + colour in the widget.
+  const valueEl = document.getElementById('live-snr-value');
+  if (valueEl) {
+    valueEl.textContent = snrDB.toFixed(1) + ' dB';
+    valueEl.style.color = snrColor(snrDB);
+  }
+
+  // Re-index as 0..N-1 so the x-axis range is always [0, MAX_POINTS-1]
+  // and the graph scrolls smoothly without rescaling.
+  if (liveSNRChart) {
+    liveSNRChart.data.datasets[0].data =
+      liveSNRData.map((v, i) => ({ x: i, y: v }));
+    liveSNRChart.data.datasets[0].borderColor = snrColor(snrDB);
+    liveSNRChart.data.datasets[0].backgroundColor =
+      snrColor(snrDB).replace('hsl(', 'hsla(').replace(')', ', 0.15)');
+    liveSNRChart.update('none'); // no animation
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SNR display — always active for the selected channel
 // ---------------------------------------------------------------------------
 
@@ -1313,6 +1548,7 @@ function updateSNRDisplay(stats) {
   if (!valueEl || !barEl) return;
 
   if (!stats || stats.count === 0) {
+    latestLiveSNR = null;
     valueEl.textContent = '—';
     barEl.style.width = '0%';
     barEl.style.backgroundColor = snrColor(30);
@@ -1320,6 +1556,8 @@ function updateSNRDisplay(stats) {
   }
 
   const snr = stats.avg_db;
+  latestLiveSNR = snr;   // capture for live bar sampling
+  pushLiveSNR(snr);      // feed the sparkline
   valueEl.textContent = snr.toFixed(1) + ' dB';
 
   // Map SNR to bar: 30 dB → 0%, 50 dB → 100% (matches snrColor scale)
@@ -1380,6 +1618,7 @@ setInterval(() => {
   }
 
   initAudioPanel();
+  initLiveSNRChart();
   await loadChannels();
   await loadMoreImages();
   connectSSE();

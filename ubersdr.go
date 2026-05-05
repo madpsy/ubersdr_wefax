@@ -76,14 +76,21 @@ type wsMessage struct {
 // snrAccumulator — collects per-packet SNR from v2 full-header packets
 // ---------------------------------------------------------------------------
 
+// SNRPoint is one 1-second bucket in the SNR time series stored with each image.
+type SNRPoint struct {
+	T     int64   `json:"t"`      // Unix milliseconds (bucket start)
+	SNRDB float32 `json:"snr_db"` // average SNR in this bucket
+}
+
 // SNRStats is a snapshot of accumulated SNR measurements.
 type SNRStats struct {
-	Count       int     `json:"count"`
-	AvgDB       float32 `json:"avg_db"`
-	MinDB       float32 `json:"min_db"`
-	MaxDB       float32 `json:"max_db"`
-	BasebandAvg float32 `json:"baseband_avg_dbfs"`
-	NoiseAvg    float32 `json:"noise_avg_dbfs"`
+	Count       int        `json:"count"`
+	AvgDB       float32    `json:"avg_db"`
+	MinDB       float32    `json:"min_db"`
+	MaxDB       float32    `json:"max_db"`
+	BasebandAvg float32    `json:"baseband_avg_dbfs"`
+	NoiseAvg    float32    `json:"noise_avg_dbfs"`
+	Series      []SNRPoint `json:"series,omitempty"` // 1-second bucketed time series
 }
 
 // sanitiseFloat replaces NaN/Inf with 0 so the value is safe for JSON encoding.
@@ -107,6 +114,7 @@ func (s *SNRStats) Sanitise() *SNRStats {
 }
 
 type snrSample struct {
+	tMs   int64 // wall-clock Unix milliseconds
 	snrDB float32
 	bb    float32
 	noise float32
@@ -135,6 +143,7 @@ func (a *snrAccumulator) add(baseband, noise float32) {
 	}
 	a.mu.Lock()
 	a.samples = append(a.samples, snrSample{
+		tMs:   time.Now().UnixMilli(),
 		snrDB: snr,
 		bb:    baseband,
 		noise: noise,
@@ -165,6 +174,37 @@ func (a *snrAccumulator) drain() SNRStats {
 		}
 	}
 	fn := float32(n)
+
+	// Build 1-second bucketed time series (same algorithm as ubersdr_qsstv).
+	series := make([]SNRPoint, 0, n/50+1)
+	if n > 0 {
+		bucketStart := a.samples[0].tMs / 1000 * 1000 // floor to second
+		var bucketSum float32
+		var bucketCount int
+		for _, sp := range a.samples {
+			bkt := sp.tMs / 1000 * 1000
+			if bkt != bucketStart {
+				if bucketCount > 0 {
+					series = append(series, SNRPoint{
+						T:     bucketStart,
+						SNRDB: bucketSum / float32(bucketCount),
+					})
+				}
+				bucketStart = bkt
+				bucketSum = 0
+				bucketCount = 0
+			}
+			bucketSum += sp.snrDB
+			bucketCount++
+		}
+		if bucketCount > 0 {
+			series = append(series, SNRPoint{
+				T:     bucketStart,
+				SNRDB: bucketSum / float32(bucketCount),
+			})
+		}
+	}
+
 	a.samples = a.samples[:0]
 	s := SNRStats{
 		Count:       n,
@@ -173,6 +213,7 @@ func (a *snrAccumulator) drain() SNRStats {
 		MaxDB:       maxSNR,
 		BasebandAvg: sumBB / fn,
 		NoiseAvg:    sumN / fn,
+		Series:      series,
 	}
 	s.Sanitise()
 	return s
@@ -660,9 +701,9 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 				continue
 			}
 			switch m.Type {
-				case "error":
-					log.Printf("[%s] server error: %s", inst.label, m.Error)
-					return true
+			case "error":
+				log.Printf("[%s] server error: %s", inst.label, m.Error)
+				return true
 			case "status":
 				log.Printf("[%s] status: session=%s freq=%d mode=%s",
 					inst.label, m.SessionID, m.Frequency, m.Mode)

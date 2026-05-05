@@ -15,6 +15,12 @@ import (
 // transmissions).
 const minSaveRows = 500
 
+// maxSaveRows is a hard upper bound on image height.  A standard 120-LPM
+// HF-fax broadcast is at most ~20 minutes of image content (≈2400 lines).
+// If we accumulate more than maxSaveRows the STOP tone was almost certainly
+// missed; force-save the image and open a fresh one so the file stays sane.
+const maxSaveRows = 3600 // 30 min × 120 LPM
+
 // wefaxChannel owns one UberSDR instance and one WEFAXDecoder.
 // It converts raw PCM bytes → []int16 → decoder → image assembler.
 type wefaxChannel struct {
@@ -94,15 +100,9 @@ func (c *wefaxChannel) run(ctx context.Context, cfg WEFAXConfig) {
 	}
 	defer c.decoder.Stop()
 
-	// Always open an in-progress image immediately so lines are captured from
-	// the very first packet, regardless of whether a START tone has been heard.
-	// The decoder now starts with autoStarted=true so lines flow right away.
-	// When a real START tone is detected, handleStart() will discard the
-	// partial and begin a fresh image; a STOP tone saves the image and resets
-	// the decoder to wait for the next START — preserving normal boundaries.
-	// Use silent=true so the frontend badge doesn't flash blue at startup.
-	log.Printf("[%s] opening image immediately (lines flow from first packet)", c.label)
-	c.openImageSilently()
+	// The decoder starts with autoStarted=false, so no lines will flow until
+	// a real START tone is detected.  We do not need to pre-open a buffer here;
+	// handleStart() will open one when the tone arrives.
 
 	// Start the image assembler goroutine.
 	go c.assembleImages(ctx)
@@ -310,6 +310,31 @@ func (c *wefaxChannel) handleImageLine(msg []byte) {
 
 	if img == nil {
 		// Receiving lines before START — ignore (autoStart not yet triggered)
+		return
+	}
+
+	// Safety cap: if the image has grown beyond maxSaveRows the STOP tone was
+	// almost certainly missed.  Force-save the current image and open a fresh
+	// one so we never produce multi-hour / multi-GB files.
+	if len(img.rows) >= maxSaveRows {
+		log.Printf("[%s] image reached %d rows (maxSaveRows) — force-saving and resetting", c.label, len(img.rows))
+		c.mu.Lock()
+		c.currentImg = nil
+		c.decoding = false
+		c.mu.Unlock()
+
+		img.snr = c.inst.DrainSNR()
+		go func() {
+			if err := saveImage(img, c.store, c.hub); err != nil {
+				log.Printf("[%s] saveImage (force): %v", c.label, err)
+			}
+		}()
+
+		// Broadcast stop so the frontend badge resets.
+		c.hub.broadcast(sseEvent{
+			Event: "channel_stop",
+			Data:  map[string]interface{}{"label": c.label, "freq_hz": c.inst.freqHz},
+		})
 		return
 	}
 

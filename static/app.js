@@ -655,22 +655,25 @@ function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
   }
 }
 
-// drawSNRColumn: render snrValues into the full-height #snr-column-bar canvas.
-// Pass totalLines=0 and filledLines=0 to fill the whole column (live mode).
-function drawSNRColumn(snrValues, totalLines, filledLines) {
-  const canvas = document.getElementById('snr-column-bar');
+// drawSNRBar: render snrValues into a named SNR bar canvas.
+//   id         — element id of the <canvas> ('live-snr-bar' or 'detail-snr-bar')
+//   snrValues  — array of SNR dB numbers
+//   totalLines — full image height in lines (0 = fill whole bar)
+//   filledLines— lines decoded so far
+function drawSNRBar(id, snrValues, totalLines, filledLines) {
+  const canvas = document.getElementById(id);
   if (!canvas) return;
-  // Size the canvas pixel buffer to match the CSS layout size of the column.
+  // Size the canvas pixel buffer to match the CSS layout size.
   const w = canvas.offsetWidth  || 14;
   const h = canvas.offsetHeight || canvas.parentElement.offsetHeight || 200;
   canvas.width  = w;
   canvas.height = h;
-  renderSNRBar(canvas, snrValues, totalLines, filledLines || snrValues.length);
+  renderSNRBar(canvas, snrValues, totalLines, filledLines != null ? filledLines : snrValues.length);
 }
 
-// clearSNRColumn: blank the column canvas (called on reset / no data).
-function clearSNRColumn() {
-  const canvas = document.getElementById('snr-column-bar');
+// clearSNRBar: blank a named SNR bar canvas.
+function clearSNRBar(id) {
+  const canvas = document.getElementById(id);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -745,12 +748,12 @@ function selectRecord(id) {
     <tr><th>Size</th><td>${rec.width} × ${rec.lines} px</td></tr>
     ${snrRow}`;
 
-  // SNR quality bar — drawn into the full-height #snr-column-bar canvas.
+  // SNR quality bar — drawn into #detail-snr-bar beside the image.
   // snr.series is an array of {t, snr_db} 1-second buckets (absent on old sidecars).
   const snrValues = (snr.series && snr.series.length > 0)
     ? snr.series.map(p => p.snr_db)
     : [];
-  drawSNRColumn(snrValues, rec.image_height || 0, rec.lines_decoded || 0);
+  drawSNRBar('detail-snr-bar', snrValues, rec.image_height || 0, rec.lines_decoded || 0);
 
   updateDetailNav();
 }
@@ -760,12 +763,8 @@ function closeDetail() {
   document.getElementById('detail-view').classList.add('hidden');
   document.getElementById('live-panel').classList.remove('hidden');
   document.querySelectorAll('.thumb-card').forEach(c => c.classList.remove('selected'));
-  // Restore live bar state in the SNR column (or clear if no live data).
-  if (liveBarSNRValues.length > 0) {
-    drawSNRColumn(liveBarSNRValues, 0, liveBarCurrentLine);
-  } else {
-    clearSNRColumn();
-  }
+  // Clear the detail SNR bar (live bar is separate and always up-to-date).
+  clearSNRBar('detail-snr-bar');
 }
 
 function updateDetailNav() {
@@ -937,13 +936,13 @@ function resetLiveCanvas() {
   c.height = 1;
   document.getElementById('live-line-count').textContent = '';
 
-  // Reset live SNR bar state and clear the column.
+  // Reset live SNR bar state and clear the live bar canvas.
   liveBarSNRValues = [];
   liveBarCurrentLine = 0;
-  clearSNRColumn();
+  clearSNRBar('live-snr-bar');
 }
 
-// showLiveSNRBar: no-op — the SNR column is always visible in the layout.
+// showLiveSNRBar: no-op — the SNR bar canvas is always in the DOM beside #live-canvas-wrap.
 function showLiveSNRBar() {}
 
 // ---------------------------------------------------------------------------
@@ -982,11 +981,13 @@ function connectSSE() {
 
     appendLiveLine(pixels);
 
-    // Sample current SNR and redraw the column bar.
+    // Sample current SNR and redraw the live bar.
+    // Use liveCanvas.height as totalLines so the bar only fills the proportion
+    // of the canvas that has been drawn — it grows line-by-line from the top.
     liveBarSNRValues.push(latestLiveSNR !== null ? latestLiveSNR : 30);
     liveBarCurrentLine++;
-    // totalLines=0 → fillFraction=1 (bar always fills fully; no known frame height)
-    drawSNRColumn(liveBarSNRValues, 0, liveBarCurrentLine);
+    const liveCanvasH = liveCanvas ? liveCanvas.height : 0;
+    drawSNRBar('live-snr-bar', liveBarSNRValues, liveCanvasH, liveBarCurrentLine);
   });
 
   sseSource.addEventListener('channel_start', e => {

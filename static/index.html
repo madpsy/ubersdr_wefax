@@ -72,8 +72,11 @@
           <span id="live-label">Waiting for signal…</span>
           <span id="live-line-count"></span>
         </div>
-        <div id="live-canvas-wrap">
-          <canvas id="live-canvas"></canvas>
+        <div id="live-body">
+          <div id="live-canvas-wrap">
+            <canvas id="live-canvas"></canvas>
+          </div>
+          <canvas id="live-snr-bar" class="snr-bar-canvas" title="SNR quality (red=poor → green=good)"></canvas>
         </div>
       </div>
 
@@ -91,6 +94,7 @@
           <div id="detail-image-wrap">
             <img id="detail-img" src="" alt="Fax image" />
           </div>
+          <canvas id="detail-snr-bar" class="snr-bar-canvas" title="SNR quality (red=poor → green=good)"></canvas>
           <div id="detail-sidebar">
             <div id="detail-meta">
               <table id="detail-meta-table"></table>
@@ -102,11 +106,6 @@
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- ── SNR column — thin bar between detail and audio panels ── -->
-    <div id="snr-column" title="SNR quality (red=poor → green=good)">
-      <canvas id="snr-column-bar"></canvas>
     </div>
 
     <!-- ── Right: audio preview panel ── -->

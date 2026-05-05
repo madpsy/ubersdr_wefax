@@ -155,28 +155,20 @@ select:focus { outline: 2px solid var(--accent); }
 
 .main-layout {
   display: grid;
-  grid-template-columns: 260px 1fr 16px 200px;
+  grid-template-columns: 260px 1fr 200px;
   height: calc(100vh - var(--top-h));
   margin-top: var(--top-h);
   overflow: hidden;
 }
 
-/* ── SNR column — thin bar between detail and audio panels ── */
-#snr-column {
-  background: var(--bg2);
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-}
-
-#snr-column-bar {
+/* ── SNR bar canvas — sits inline beside the image/live canvas ── */
+.snr-bar-canvas {
   display: block;
   width: 14px;
-  flex: 1;
-  min-height: 0;
+  flex-shrink: 0;
+  align-self: stretch;
+  background: var(--bg2);
+  border-left: 1px solid var(--border);
 }
 
 /* ── Gallery panel ── */
@@ -323,6 +315,14 @@ select:focus { outline: 2px solid var(--accent); }
 
 #live-label { font-weight: 600; }
 #live-line-count { font-size: 12px; color: var(--text-dim); }
+
+/* #live-body: row containing the scrollable canvas area + SNR bar */
+#live-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  overflow: hidden;
+}
 
 #live-canvas-wrap {
   flex: 1;
@@ -656,7 +656,7 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
 @media (max-width: 900px) {
   .main-layout { grid-template-columns: 220px 1fr; }
   #audio-panel { display: none; }
-  #snr-column  { display: none; }
+  .snr-bar-canvas { display: none; }
 }
 @media (max-width: 600px) {
   .main-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }

@@ -45,7 +45,8 @@ type wefaxChannel struct {
 
 // inProgressImage accumulates pixel rows for one fax image.
 type inProgressImage struct {
-	rows      [][]byte // one entry per emitted output line
+	rows      [][]byte  // one entry per emitted output line
+	rowSNR    []float32 // one SNR dB value per row (sampled at decode time)
 	startedAt time.Time
 	freqHz    int
 	audioMode string
@@ -273,13 +274,14 @@ func (c *wefaxChannel) handleStop() {
 }
 
 // snapshotRows returns a copy of the rows accumulated so far in the current
-// in-progress image, along with the channel's frequency.  Used by the replay
-// endpoint so a newly-connected browser can catch up on a mid-receive image.
-func (c *wefaxChannel) snapshotRows() (freqHz int, rows [][]byte) {
+// in-progress image, along with the channel's frequency and per-line SNR values.
+// Used by the replay endpoint so a newly-connected browser can catch up on a
+// mid-receive image with correct SNR bar data.
+func (c *wefaxChannel) snapshotRows() (freqHz int, rows [][]byte, rowSNR []float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.currentImg == nil {
-		return c.inst.freqHz, nil
+		return c.inst.freqHz, nil, nil
 	}
 	freqHz = c.inst.freqHz
 	rows = make([][]byte, len(c.currentImg.rows))
@@ -288,6 +290,8 @@ func (c *wefaxChannel) snapshotRows() (freqHz int, rows [][]byte) {
 		copy(cp, r)
 		rows[i] = cp
 	}
+	rowSNR = make([]float32, len(c.currentImg.rowSNR))
+	copy(rowSNR, c.currentImg.rowSNR)
 	return
 }
 
@@ -338,9 +342,16 @@ func (c *wefaxChannel) handleImageLine(msg []byte) {
 		return
 	}
 
+	// Sample current SNR for this line (peek — does not reset accumulator).
+	lineSNR := float32(0)
+	if peek := c.inst.PeekSNR(); peek.Count > 0 {
+		lineSNR = peek.AvgDB
+	}
 	img.rows = append(img.rows, pixels)
+	img.rowSNR = append(img.rowSNR, lineSNR)
 
-	// Broadcast live row to SSE clients.
+	// Broadcast live row to SSE clients (include snr_db so clients don't need
+	// to correlate with the separate SNR SSE stream).
 	c.hub.broadcast(sseEvent{
 		Event: "fax_line",
 		Data: map[string]interface{}{
@@ -349,6 +360,7 @@ func (c *wefaxChannel) handleImageLine(msg []byte) {
 			"line":       lineNum,
 			"width":      width,
 			"pixels_b64": encodePixelsB64(pixels),
+			"snr_db":     lineSNR,
 		},
 	})
 }

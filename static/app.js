@@ -403,13 +403,35 @@ async function replayLiveCanvas(label) {
     if (!body.rows || body.rows.length === 0) return;
     // Only replay if we are still watching this channel.
     if (liveDrawingLabel !== label) return;
-    for (const b64 of body.rows) {
+
+    // Pre-populate SNR bar with per-line values from the replay snapshot.
+    // snr_values is a float32 array with one entry per row (may be absent on
+    // older server versions — fall back to latestLiveSNR in that case).
+    const replaySNR = (body.snr_values && body.snr_values.length === body.rows.length)
+      ? body.snr_values
+      : null;
+
+    for (let i = 0; i < body.rows.length; i++) {
       // Stop replaying if the user switched away mid-replay.
       if (liveDrawingLabel !== label) break;
+      const b64 = body.rows[i];
       const bin = atob(b64);
       const pixels = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) pixels[i] = bin.charCodeAt(i);
+      for (let j = 0; j < bin.length; j++) pixels[j] = bin.charCodeAt(j);
       appendLiveLine(pixels);
+      // Record SNR for this replayed line.
+      const snr = replaySNR ? replaySNR[i] : (latestLiveSNR !== null ? latestLiveSNR : 30);
+      liveBarSNRValues.push(snr);
+      liveBarCurrentLine++;
+    }
+
+    // Draw the bar once after all replayed lines are loaded.
+    if (liveCanvas && liveBarSNRValues.length > 0) {
+      const renderedCanvasH = liveCanvas.getBoundingClientRect().height;
+      const pixelH = liveCanvas.height || 1;
+      const renderedLineH = renderedCanvasH / pixelH;
+      const barH = Math.round(renderedLineH * liveBarCurrentLine);
+      drawSNRBarFixed('live-snr-bar', liveBarSNRValues, barH);
     }
   } catch (e) {
     console.warn('[replay]', e);
@@ -1012,12 +1034,12 @@ function connectSSE() {
 
     appendLiveLine(pixels);
 
-    // Sample current SNR and redraw the live bar.
-    // Compute the rendered height of the lines received so far:
-    //   renderedLineH = rendered canvas height / canvas pixel height
-    //   barH = renderedLineH * liveBarCurrentLine
-    // This avoids the 200-line chunk jump in liveCanvas.height causing fill fraction to halve.
-    liveBarSNRValues.push(latestLiveSNR !== null ? latestLiveSNR : 30);
+    // Use the per-line SNR value sent by the server in the fax_line event.
+    // Fall back to latestLiveSNR (from the SNR SSE stream) if absent.
+    const lineSNR = (data.snr_db != null && data.snr_db > 0)
+      ? data.snr_db
+      : (latestLiveSNR !== null ? latestLiveSNR : 30);
+    liveBarSNRValues.push(lineSNR);
     liveBarCurrentLine++;
     if (liveCanvas) {
       const renderedCanvasH = liveCanvas.getBoundingClientRect().height;

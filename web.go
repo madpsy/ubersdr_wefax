@@ -472,16 +472,17 @@ func startHTTPServer(addr string, store *imageStore, hub *sseHub, channels []*we
 			http.Error(w, "channel not found", http.StatusNotFound)
 			return
 		}
-		freqHz, rows := ch.snapshotRows()
+		freqHz, rows, rowSNR := ch.snapshotRows()
 		// Encode each row as base64 for JSON transport.
 		b64rows := make([]string, len(rows))
 		for i, r := range rows {
 			b64rows[i] = base64.StdEncoding.EncodeToString(r)
 		}
 		writeJSON(w, map[string]interface{}{
-			"label":   label,
-			"freq_hz": freqHz,
-			"rows":    b64rows,
+			"label":      label,
+			"freq_hz":    freqHz,
+			"rows":       b64rows,
+			"snr_values": rowSNR, // per-line SNR dB values (float32 slice, same length as rows)
 		})
 	})
 

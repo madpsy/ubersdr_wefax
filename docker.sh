@@ -7,9 +7,10 @@
 # Usage:
 #   ./docker.sh [build|push|run|arm64]
 #
-#   build  — build the image for linux/amd64 (default)
-#   arm64  — build the image for linux/arm64 (Raspberry Pi, Apple Silicon, etc.)
-#   push   — build then push to registry (set IMAGE env var)
+#   build  — build the image for linux/amd64 and load it locally (default)
+#   arm64  — build the image for linux/arm64 and load it locally
+#   push   — build for linux/amd64 AND linux/arm64 via buildx, push multi-arch
+#             manifest to registry, then commit & push git repo
 #   run    — run the image locally (set env vars below)
 #
 # Environment variables (build):
@@ -23,6 +24,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="${IMAGE:-madpsy/ubersdr_wefax:latest}"
 PLATFORM="${PLATFORM:-linux/amd64}"
 
+# Name of the buildx builder used for multi-platform builds
+BUILDER_NAME="ubersdr_wefax_multiarch"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -33,35 +37,69 @@ check_deps() {
     command -v docker >/dev/null || die "docker not found in PATH"
 }
 
-build() {
-    check_deps
+# Ensure a multi-platform buildx builder exists and is active.
+# Creates one with the docker-container driver if it doesn't exist yet.
+ensure_builder() {
+    if ! docker buildx inspect "$BUILDER_NAME" &>/dev/null; then
+        echo "Creating buildx builder '$BUILDER_NAME' (docker-container driver)..."
+        docker buildx create \
+            --name "$BUILDER_NAME" \
+            --driver docker-container \
+            --platform linux/amd64,linux/arm64 \
+            --use
+        docker buildx inspect --bootstrap "$BUILDER_NAME"
+    else
+        docker buildx use "$BUILDER_NAME"
+    fi
+}
 
-    # Create a temporary build context from the source tree only
+# Stage the build context into a temp directory, excluding build artefacts.
+stage_context() {
     TMPCTX="$(mktemp -d)"
     trap 'rm -rf "$TMPCTX"' EXIT
-
     echo "Staging build context in $TMPCTX..."
-
-    # Copy source tree (excluding build artefacts and git history)
     rsync -a --exclude='.git' \
               --exclude='wefax-images' \
               --exclude='images' \
               --exclude='ubersdr_wefax' \
               "$SCRIPT_DIR/" "$TMPCTX/"
+}
 
-    echo "Building image $IMAGE (platform=$PLATFORM)..."
-    docker build \
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+# Build a single platform image and load it into the local Docker daemon.
+build() {
+    check_deps
+    stage_context
+
+    echo "Building image $IMAGE (platform=$PLATFORM) via buildx --load..."
+    ensure_builder
+    docker buildx build \
         --platform "$PLATFORM" \
         --tag "$IMAGE" \
+        --load \
         "$TMPCTX"
 
     echo "Built: $IMAGE"
 }
 
+# Build linux/amd64 + linux/arm64 and push a combined manifest to the registry.
 push() {
-    build
-    echo "Pushing $IMAGE..."
-    docker push "$IMAGE"
+    check_deps
+    stage_context
+
+    echo "Building multi-arch image $IMAGE (linux/amd64,linux/arm64) and pushing..."
+    ensure_builder
+    docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --tag "$IMAGE" \
+        --push \
+        "$TMPCTX"
+
+    echo "Pushed multi-arch manifest: $IMAGE"
+
     echo "Committing and pushing git repository..."
     git add -A
     git diff --cached --quiet || git commit -m "Release $IMAGE"

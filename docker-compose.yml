@@ -3,6 +3,7 @@ services:
     image: madpsy/ubersdr_wefax:latest
     container_name: wefax
     restart: unless-stopped
+    cpu_shares: 512
     environment:
       # UberSDR WebSocket URL
       UBERSDR_URL: "ws://ubersdr:8080/ws"

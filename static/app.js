@@ -865,6 +865,7 @@ async function _doDelete(id) {
       if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
       return;
     }
+    if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
     removeRecordLocally(id);
     closeDetail();
   } catch (e) {

@@ -13,7 +13,7 @@
 #   NO_AUTOSTOP            Set to 1 to disable auto-stop on STOP tone
 #   NO_AUTOSTART           Set to 1 to disable auto-start on START tone
 #   CLEANUP_PARTIAL_DAYS   Delete partial images older than N days (0=disabled, default 7)
-#   CLEANUP_SNR_DAYS       Delete low-SNR images (< 40 dB) older than N days (0=disabled, default 7)
+#   CLEANUP_SNR_DAYS       Delete low-SNR images (below ~5.3 dB avg passband SNR) older than N days (0=disabled, default 7)
 #   CLEANUP_ALL_DAYS       Delete ALL images older than N days (0=disabled, default 30)
 
 set -e

@@ -343,15 +343,29 @@ func (c *wefaxChannel) handleImageLine(msg []byte) {
 	}
 
 	// Sample current SNR for this line (peek — does not reset accumulator).
+	//
+	// haveSNR is carried separately rather than letting 0 stand for "no
+	// measurement".  On audio protocol version 2 that was safe, because the
+	// figure was an S/N0 in dB·Hz and never came near zero; on version 4 it is
+	// a passband SNR, where 0 dB and negative values are ordinary readings from
+	// a weak signal.  Sending a bare 0 would make the client unable to tell a
+	// real 0 dB line from a line with no measurement at all.
 	lineSNR := float32(0)
+	haveSNR := false
 	if peek := c.inst.PeekSNR(); peek.Count > 0 {
 		lineSNR = peek.AvgDB
+		haveSNR = true
 	}
 	img.rows = append(img.rows, pixels)
 	img.rowSNR = append(img.rowSNR, lineSNR)
 
 	// Broadcast live row to SSE clients (include snr_db so clients don't need
-	// to correlate with the separate SNR SSE stream).
+	// to correlate with the separate SNR SSE stream).  snr_db is null, not 0,
+	// when there is no measurement — see above.
+	var snrField interface{}
+	if haveSNR {
+		snrField = lineSNR
+	}
 	c.hub.broadcast(sseEvent{
 		Event: "fax_line",
 		Data: map[string]interface{}{
@@ -360,7 +374,7 @@ func (c *wefaxChannel) handleImageLine(msg []byte) {
 			"line":       lineNum,
 			"width":      width,
 			"pixels_b64": encodePixelsB64(pixels),
-			"snr_db":     lineSNR,
+			"snr_db":     snrField,
 		},
 	})
 }

@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/nathm8/ubersdr_wefax/internal/pcmv4"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,22 @@ type imageRecord struct {
 	// Old sidecars without these fields read back as 0 (omitempty).
 	ImageHeight  int `json:"image_height,omitempty"`
 	LinesDecoded int `json:"lines_decoded,omitempty"`
+
+	// AudioProtocol is the UberSDR audio protocol version whose packet header
+	// produced the figures in SNR, and so which SCALE those figures are on.
+	//
+	// It exists because the meaning of the header's noise field changed at
+	// version 3: version 2 carried a noise density in dBFS/Hz, making
+	// baseband - noise an S/N0 in dB·Hz, while version 3 and up carry the noise
+	// power in the passband, making the same subtraction a true SNR some 34.7 dB
+	// lower for the same signal.  Sidecars written on either side of that change
+	// are numerically incomparable and there is nothing else in them to tell
+	// which is which.
+	//
+	// 0 means the sidecar predates this field, i.e. the image was recorded
+	// before the version 4 migration and is on the old scale.  See
+	// snrThresholdFor in cleanup.go, which refuses to prune those.
+	AudioProtocol int `json:"audio_protocol,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +268,9 @@ func saveImage(img *inProgressImage, store *imageStore, hub *sseHub) error {
 		SNR:          img.snr,
 		ImageHeight:  height,
 		LinesDecoded: height,
+		// Stamp the scale the SNR figures are on, so the cleanup worker never
+		// has to infer it. See imageRecord.AudioProtocol.
+		AudioProtocol: pcmv4.ProtocolVersion,
 	}
 
 	// Write JSON sidecar atomically: marshal → temp file → rename, so a

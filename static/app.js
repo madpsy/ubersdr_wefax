@@ -232,10 +232,43 @@ let fftLabel = '';
 let snrES = null;
 let snrLabel = '';
 
+// SNR colour scale, and the two scales it has to straddle.
+//
+// The UberSDR audio protocol changed the meaning of the header's noise field at
+// version 3: version 2 sent a noise DENSITY in dBFS/Hz, so baseband - noise was
+// an S/N0 in dB·Hz, while version 3 and up send the noise power in the
+// demodulator passband, making the same subtraction a true SNR. A record's
+// colour therefore depends on which protocol recorded it: records carry
+// audio_protocol, and anything live is on the current scale.
+//
+// The LIVE window below is fitted to MEASURED values, not derived by shifting
+// the old one. The old 30..50 window was calibrated when the server's reported
+// noise was floored near -30, which compressed SNR into a narrow band; that
+// floor is gone, so any range carried across by arithmetic would be wrong.
+// Measured against m9psy.tunnel.ubersdr.org, 12 kHz USB, ~1500 packets each:
+//
+//   empty channel (4610 & 13500 kHz):  SNR ≈ 0 dB   (6 s means -0.7 .. +0.6)
+//   strong fax    (7880 kHz):          SNR ≈ 30 dB  (6 s means 29.4 .. 32.9,
+//                                                    p05 24.0, p95 35.2, max 42.4)
+//
+// So the live ramp runs 0 (dead) to 35 (excellent), and the sparkline axis
+// leaves headroom to the observed 42 dB peak.
+const SNR_COLOR_SPAN_DB  = 35;   // live: red at ≤0 → green at ≥35 dB
+const SNR_COLOR_LO       = 0;    // live floor: an empty channel measures ~0 dB
+
+// Legacy records only. Their stored figures are on the old dB·Hz scale AND from
+// the clamped-noise era, and this is the window they have always been displayed
+// with. Nothing here can re-derive it, so it is left exactly as it was.
+const SNR_COLOR_SPAN_V2  = 20;
+const SNR_COLOR_LO_V2    = 30;   // old scale: red at ≤30 → green at ≥50 dB·Hz
+
 // Live SNR sparkline (badges-bar chart) — exact port from ubersdr_qsstv
 const LIVE_SNR_MAX_POINTS = 120; // ~30 s at ~4 Hz SNR cadence
-const LIVE_SNR_MIN = 25;  // WEFAX HF signals typically 30–55 dB
-const LIVE_SNR_MAX = 60;  // lower ceiling than qsstv (SSTV is typically 50–80 dB)
+// Sparkline y-axis, fitted to the measured range above. Was 25..60, from the
+// old scale and the clamped-noise era; a trace on that window never leaves the
+// floor now.
+const LIVE_SNR_MIN = -5;  // just under the measured empty-channel level (~0 dB)
+const LIVE_SNR_MAX = 45;  // just over the measured peak on a strong fax (42.4 dB)
 let liveSNRChart = null;
 let liveSNRData  = []; // plain dB numbers; re-indexed as {x,y} on each update
 
@@ -420,7 +453,7 @@ async function replayLiveCanvas(label) {
       for (let j = 0; j < bin.length; j++) pixels[j] = bin.charCodeAt(j);
       appendLiveLine(pixels);
       // Record SNR for this replayed line.
-      const snr = replaySNR ? replaySNR[i] : (latestLiveSNR !== null ? latestLiveSNR : 30);
+      const snr = replaySNR ? replaySNR[i] : (latestLiveSNR !== null ? latestLiveSNR : SNR_COLOR_LO);
       liveBarSNRValues.push(snr);
       liveBarCurrentLine++;
     }
@@ -608,12 +641,19 @@ function buildThumbCard(rec) {
 // SNR colour + quality bar (ported from ubersdr_qsstv)
 // ---------------------------------------------------------------------------
 
+// snrColorRamp: [floor, span] for a record from the given protocol.
+// Omitted or >= 3 means the current passband-SNR scale.
+function snrColorRamp(audioProtocol) {
+  return (audioProtocol != null && audioProtocol > 0 && audioProtocol < 3)
+    ? [SNR_COLOR_LO_V2, SNR_COLOR_SPAN_V2]
+    : [SNR_COLOR_LO, SNR_COLOR_SPAN_DB];
+}
+
 // snrColor: maps an SNR dB value to a CSS colour string.
-// red at ≤30 dB → orange at 40 dB → green at ≥50 dB
-// Identical to ubersdr_qsstv app.js snrColor().
-function snrColor(snrDB) {
-  // Clamp to [30, 50] then map to hue [0°=red, 120°=green]
-  const t = Math.max(0, Math.min(1, (snrDB - 30) / 20));
+// red at the floor → green one span above it.
+function snrColor(snrDB, audioProtocol) {
+  const [lo, span] = snrColorRamp(audioProtocol);
+  const t = Math.max(0, Math.min(1, (snrDB - lo) / span));
   const hue = Math.round(t * 120); // 0 → 120
   return `hsl(${hue}, 100%, 50%)`;
 }
@@ -624,7 +664,7 @@ function snrColor(snrDB) {
 //   totalLines  — full image height in lines (denominator for fill fraction)
 //   filledLines — lines actually decoded (numerator); defaults to snrValues.length
 // Identical to ubersdr_qsstv app.js renderSNRBar().
-function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
+function renderSNRBar(canvas, snrValues, totalLines, filledLines, audioProtocol) {
   if (!canvas || !snrValues || snrValues.length === 0) {
     if (canvas) {
       const ctx = canvas.getContext('2d');
@@ -658,7 +698,7 @@ function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
   const grad = ctx.createLinearGradient(0, 0, 0, filledH);
   for (let i = 0; i < n; i++) {
     const stop = i / Math.max(n - 1, 1);
-    grad.addColorStop(stop, snrColor(snrValues[i]));
+    grad.addColorStop(stop, snrColor(snrValues[i], audioProtocol));
   }
 
   ctx.fillStyle = grad;
@@ -683,7 +723,7 @@ function renderSNRBar(canvas, snrValues, totalLines, filledLines) {
 //   totalLines — full image height in lines (0 = fill whole bar)
 //   filledLines— lines decoded so far
 //   imageEl    — the image/canvas element whose rendered height the bar should match
-function drawSNRBar(id, snrValues, totalLines, filledLines, imageEl) {
+function drawSNRBar(id, snrValues, totalLines, filledLines, imageEl, audioProtocol) {
   const canvas = document.getElementById(id);
   if (!canvas) return;
   const w = canvas.offsetWidth || 14;
@@ -698,7 +738,7 @@ function drawSNRBar(id, snrValues, totalLines, filledLines, imageEl) {
   canvas.style.height = h + 'px';
   canvas.width  = w;
   canvas.height = h;
-  renderSNRBar(canvas, snrValues, totalLines, filledLines != null ? filledLines : snrValues.length);
+  renderSNRBar(canvas, snrValues, totalLines, filledLines != null ? filledLines : snrValues.length, audioProtocol);
 }
 
 // drawSNRBarFixed: render snrValues into a named SNR bar canvas at an explicit pixel height.
@@ -772,9 +812,11 @@ function selectRecord(id) {
 
   const table = document.getElementById('detail-meta-table');
   const snr = rec.snr || {};
-  const snrAvgStyle = snr.avg_db != null ? ` style="color:${snrColor(snr.avg_db)}"` : '';
-  const snrMinStyle = snr.min_db != null ? ` style="color:${snrColor(snr.min_db)}"` : '';
-  const snrMaxStyle = snr.max_db != null ? ` style="color:${snrColor(snr.max_db)}"` : '';
+  // Colour this record's figures on the scale they were recorded on.
+  const recProto = rec.audio_protocol;
+  const snrAvgStyle = snr.avg_db != null ? ` style="color:${snrColor(snr.avg_db, recProto)}"` : '';
+  const snrMinStyle = snr.min_db != null ? ` style="color:${snrColor(snr.min_db, recProto)}"` : '';
+  const snrMaxStyle = snr.max_db != null ? ` style="color:${snrColor(snr.max_db, recProto)}"` : '';
   const snrRow = snr.count > 0
     ? `<tr><th>SNR avg</th><td${snrAvgStyle}>${snr.avg_db != null ? snr.avg_db.toFixed(1) + ' dB' : '—'}</td></tr>
        <tr><th>SNR min/max</th><td><span${snrMinStyle}>${snr.min_db != null ? snr.min_db.toFixed(1) : '—'}</span> / <span${snrMaxStyle}>${snr.max_db != null ? snr.max_db.toFixed(1) : '—'}</span> dB</td></tr>
@@ -801,7 +843,7 @@ function selectRecord(id) {
   // Draw after the image has loaded so getBoundingClientRect() returns the rendered height.
   const detailImg = document.getElementById('detail-img');
   const _drawDetailBar = () =>
-    drawSNRBar('detail-snr-bar', snrValues, rec.image_height || 0, rec.lines_decoded || 0, detailImg);
+    drawSNRBar('detail-snr-bar', snrValues, rec.image_height || 0, rec.lines_decoded || 0, detailImg, recProto);
   if (detailImg.complete && detailImg.naturalHeight > 0) {
     _drawDetailBar();
   } else {
@@ -1037,9 +1079,12 @@ function connectSSE() {
 
     // Use the per-line SNR value sent by the server in the fax_line event.
     // Fall back to latestLiveSNR (from the SNR SSE stream) if absent.
-    const lineSNR = (data.snr_db != null && data.snr_db > 0)
+    // snr_db is null when the server had no measurement. It must NOT be
+    // rejected for being <= 0: on the passband-SNR scale a weak but real
+    // signal reads 0 dB or below.
+    const lineSNR = (data.snr_db != null)
       ? data.snr_db
-      : (latestLiveSNR !== null ? latestLiveSNR : 30);
+      : (latestLiveSNR !== null ? latestLiveSNR : SNR_COLOR_LO);
     liveBarSNRValues.push(lineSNR);
     liveBarCurrentLine++;
     if (liveCanvas) {
@@ -1572,7 +1617,7 @@ function updateSNRDisplay(stats) {
     latestLiveSNR = null;
     valueEl.textContent = '—';
     barEl.style.width = '0%';
-    barEl.style.backgroundColor = snrColor(30);
+    barEl.style.backgroundColor = snrColor(SNR_COLOR_LO);
     return;
   }
 
@@ -1581,8 +1626,8 @@ function updateSNRDisplay(stats) {
   pushLiveSNR(snr);      // feed the sparkline
   valueEl.textContent = snr.toFixed(1) + ' dB';
 
-  // Map SNR to bar: 30 dB → 0%, 50 dB → 100% (matches snrColor scale)
-  const pct = Math.max(0, Math.min(100, ((snr - 30) / 20) * 100));
+  // Map SNR to the bar over the same ramp snrColor uses, on the live scale.
+  const pct = Math.max(0, Math.min(100, ((snr - SNR_COLOR_LO) / SNR_COLOR_SPAN_DB) * 100));
   barEl.style.width = pct + '%';
   barEl.style.backgroundColor = snrColor(snr);
 }

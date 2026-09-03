@@ -3,142 +3,91 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
 
-	"github.com/klauspost/compress/zstd"
+	"github.com/nathm8/ubersdr_wefax/internal/pcmv4"
 )
 
 // ---------------------------------------------------------------------------
 // PCM binary packet decoder
 // ---------------------------------------------------------------------------
-// The UberSDR server sends packets in the ubersdr hybrid binary format.
-// Two packet types:
+// The UberSDR server sends one binary WebSocket message per audio packet. This
+// addon speaks audio protocol version 4 only.
 //
-//	Full header v1 (magic 0x5043 "PC", 29 bytes):
-//	  [0:2]   uint16  magic
-//	  [2]     uint8   version
-//	  [3]     uint8   format (0=PCM, 2=PCM-zstd)
-//	  [4:12]  uint64  RTP timestamp (LE)
-//	  [12:20] uint64  wall-clock ms (LE)
-//	  [20:24] uint32  sample rate (LE)
-//	  [24]    uint8   channels
-//	  [25:29] uint32  reserved
-//	  [29:]   []byte  PCM samples (big-endian int16)
+// Versions 1-3 sent a fixed 29- or 37-byte header followed by big-endian int16
+// samples, the whole thing wrapped in zstd. Version 4 replaces both halves: a
+// variable-length header that carries only what changed since the last packet,
+// and a predictive lossless codec in place of the zstd wrapper -- which was
+// making this data larger, an LZ77 byte matcher having nothing to match in a
+// band-limited RF signal.
 //
-//	Full header v2 (37 bytes) adds signal quality fields:
-//	  [25:29] float32 baseband power dBFS   ← extracted for SNR accumulator
-//	  [29:33] float32 noise density dBFS    ← extracted for SNR accumulator
-//	  [33:37] uint32  reserved
-//	  [37:]   []byte  PCM samples (big-endian int16)
-//
-//	Minimal header (magic 0x504D "PM", 13 bytes):
-//	  [0:2]   uint16  magic
-//	  [2]     uint8   version
-//	  [3:11]  uint64  RTP timestamp (LE)
-//	  [11:13] uint16  reserved
-//	  [13:]   []byte  PCM samples (big-endian int16)
-
-const (
-	magicFull    = 0x5043 // "PC"
-	magicMinimal = 0x504D // "PM"
-)
+// The wire format and the codec live in internal/pcmv4, copied verbatim from
+// the server's own encoder so the two ends agree bit for bit. See
+// internal/pcmv4/pcm_v4_header.go for the layout.
 
 // pcmPacket is the result of decoding one binary WebSocket message.
 type pcmPacket struct {
-	pcm          []byte  // little-endian int16 PCM samples
+	pcm          []byte // little-endian int16 PCM samples
 	sampleRate   int
 	channels     int
-	hasSigInfo   bool    // true only for v2 full-header packets
-	basebandDBFS float32 // baseband power dBFS (v2 only)
-	noiseDBFS    float32 // noise density dBFS (v2 only)
+	hasSigInfo   bool    // true when the header carried a signal-quality measurement
+	basebandDBFS float32 // baseband power dBFS
+	noiseDBFS    float32 // noise density dBFS
 }
 
+// signalUnavailable is the threshold for the -999 sentinel the server writes
+// when radiod reported no measurement for this channel.
+const signalUnavailable = -998
+
+// pcmDecoder decodes the packets of ONE websocket connection.
+//
+// One per connection is a requirement rather than a convenience: the version 4
+// predictor is backward adaptive, deriving its filter taps from the samples
+// already decoded rather than from anything on the wire. A decoder carried
+// across a reconnect would decode the new stream against the old one's state
+// and return plausible noise rather than an error, and for the same reason
+// every packet that arrives has to be fed to it even when its samples are
+// afterwards dropped.
 type pcmDecoder struct {
-	zd           *zstd.Decoder
-	lastRate     int
-	lastChannels int
+	v4 *pcmv4.PCMv4StreamDecoder
 }
 
 func newPCMDecoder() (*pcmDecoder, error) {
-	zd, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("zstd init: %w", err)
-	}
-	return &pcmDecoder{zd: zd}, nil
+	return &pcmDecoder{v4: pcmv4.NewPCMv4StreamDecoder()}, nil
 }
 
-// decode decompresses (if needed) and parses a binary PCM packet.
-// Returns a pcmPacket with little-endian int16 PCM bytes and signal info.
-func (d *pcmDecoder) decode(data []byte, isZstd bool) (pcmPacket, error) {
-	if isZstd {
-		var err error
-		data, err = d.zd.DecodeAll(data, nil)
-		if err != nil {
-			return pcmPacket{}, fmt.Errorf("zstd decompress: %w", err)
-		}
+// decode parses one binary packet into little-endian int16 PCM plus the stream
+// parameters the header reports.
+func (d *pcmDecoder) decode(data []byte) (pcmPacket, error) {
+	// A server older than 0.1.63 clamps a version it cannot serve down to 1 and
+	// answers with a zstd frame rather than refusing, so say why instead of
+	// logging a bad magic on every packet for the life of the process.
+	if pcmv4.IsZstdFrame(data) {
+		return pcmPacket{}, fmt.Errorf(
+			"server does not support audio protocol version %d (needs UberSDR 0.1.63 or later)",
+			pcmv4.ProtocolVersion)
 	}
 
-	if len(data) < 4 {
-		return pcmPacket{}, fmt.Errorf("packet too short (%d bytes)", len(data))
+	pcmLE, rate, channels, power, noise, err := d.v4.DecodePacketLE(data)
+	if err != nil {
+		return pcmPacket{}, err
 	}
 
-	magic := binary.LittleEndian.Uint16(data[0:2])
-
-	var pkt pcmPacket
-	var raw []byte
-
-	switch magic {
-	case magicFull:
-		version := data[2]
-		var headerLen int
-		switch version {
-		case 2:
-			headerLen = 37
-		default: // version 1
-			headerLen = 29
-		}
-		if len(data) < headerLen {
-			return pcmPacket{}, fmt.Errorf("full-header packet too short (%d < %d)", len(data), headerLen)
-		}
-		pkt.sampleRate = int(binary.LittleEndian.Uint32(data[20:24]))
-		pkt.channels = int(data[24])
-		raw = data[headerLen:]
-		d.lastRate = pkt.sampleRate
-		d.lastChannels = pkt.channels
-
-		if version == 2 {
-			pkt.hasSigInfo = true
-			pkt.basebandDBFS = math.Float32frombits(binary.LittleEndian.Uint32(data[25:29]))
-			pkt.noiseDBFS = math.Float32frombits(binary.LittleEndian.Uint32(data[29:33]))
-		}
-
-	case magicMinimal:
-		if len(data) < 13 {
-			return pcmPacket{}, fmt.Errorf("minimal-header packet too short (%d bytes)", len(data))
-		}
-		raw = data[13:]
-		pkt.sampleRate = d.lastRate
-		pkt.channels = d.lastChannels
-		if pkt.sampleRate == 0 || pkt.channels == 0 {
-			return pcmPacket{}, fmt.Errorf("minimal header received before full header")
-		}
-
-	default:
-		return pcmPacket{}, fmt.Errorf("unknown magic 0x%04X", magic)
+	pkt := pcmPacket{
+		pcm:        pcmLE,
+		sampleRate: rate,
+		channels:   channels,
 	}
-
-	// Convert big-endian int16 → little-endian int16
-	n := len(raw) / 2
-	le := make([]byte, len(raw))
-	for i := 0; i < n; i++ {
-		s := binary.BigEndian.Uint16(raw[i*2:])
-		binary.LittleEndian.PutUint16(le[i*2:], s)
+	if power > signalUnavailable && noise > signalUnavailable {
+		pkt.hasSigInfo = true
+		pkt.basebandDBFS = power
+		pkt.noiseDBFS = noise
 	}
-	pkt.pcm = le
 	return pkt, nil
 }
 
-func (d *pcmDecoder) close() { d.zd.Close() }
+// close releases the decoder. Version 4 holds no external resource, but the
+// call site owns the decoder for the life of a connection either way.
+func (d *pcmDecoder) close() {}
 
 // downmixStereoToMono converts 2-channel S16LE PCM to mono S16LE.
 // Used for wfm mode which delivers stereo 48 kHz audio.

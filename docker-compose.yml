@@ -32,7 +32,7 @@ services:
       # NO_AUTOSTOP: "0"             # Set to 1 to disable auto-stop on STOP tone
       # NO_AUTOSTART: "0"            # Set to 1 to disable auto-start on START tone
       # CLEANUP_PARTIAL_DAYS: "7"    # Delete partial images older than N days (0=disabled)
-      # CLEANUP_SNR_DAYS: "7"        # Delete low-SNR images (< 40 dB avg) older than N days (0=disabled)
+      # CLEANUP_SNR_DAYS: "7"        # Delete low-SNR images (below ~5.3 dB avg passband SNR) older than N days (0=disabled)
       # CLEANUP_ALL_DAYS: "30"       # Delete ALL images older than N days (0=disabled)
     ports:
       - "6094:6094"

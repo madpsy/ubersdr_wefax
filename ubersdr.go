@@ -1,6 +1,6 @@
 // ubersdr.go — Connect to an UberSDR WebSocket stream and receive demodulated
-// PCM audio.  Includes a lightweight SNR accumulator fed from v2 full-header
-// packets; FFT machinery removed.
+// PCM audio.  Includes a lightweight SNR accumulator fed from the signal
+// quality fields of the version 4 packet header; FFT machinery removed.
 package main
 
 import (
@@ -21,6 +21,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+
+	"github.com/nathm8/ubersdr_wefax/internal/pcmv4"
 )
 
 const rcvBufSize = 16 * 1024 * 1024 // 16 MiB SO_RCVBUF
@@ -73,7 +75,7 @@ type wsMessage struct {
 }
 
 // ---------------------------------------------------------------------------
-// snrAccumulator — collects per-packet SNR from v2 full-header packets
+// snrAccumulator — collects per-packet SNR from the header's signal-quality fields
 // ---------------------------------------------------------------------------
 
 // SNRPoint is one 1-second bucket in the SNR time series stored with each image.
@@ -485,7 +487,10 @@ func (inst *instance) wsURL() string {
 	q.Set("frequency", fmt.Sprintf("%d", dialHz))
 	q.Set("mode", inst.audioMode)
 	q.Set("format", "pcm-zstd")
-	q.Set("version", "2")
+	// Audio protocol version 4: the predictive lossless codec and the
+	// variable-length header. The format name is unchanged -- it selects the
+	// PCM stream, and only the version selects how it is framed and coded.
+	q.Set("version", fmt.Sprintf("%d", pcmv4.ProtocolVersion))
 	q.Set("user_session_id", inst.sessionID)
 	if inst.password != "" {
 		q.Set("password", inst.password)
@@ -626,7 +631,7 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 
 		switch msgType {
 		case websocket.BinaryMessage:
-			pkt, err := dec.decode(msg, true /* pcm-zstd */)
+			pkt, err := dec.decode(msg)
 			if err != nil {
 				log.Printf("[%s] decode: %v", inst.label, err)
 				continue
@@ -643,17 +648,19 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 				inst.streamMu.Unlock()
 			}
 
-			// Accumulate SNR from v2 full-header packets.
+			// Accumulate SNR from the header's signal-quality fields.
 			// Log once per connection if the server sends NaN/Inf signal-quality
 			// values — this indicates the UberSDR server has no valid measurement
 			// for this channel (e.g. the frequency is not actively demodulated
-			// with signal-quality reporting, or the server predates the v2 header).
+			// with signal-quality reporting).  The version 4 header's own
+			// -999 sentinel is already filtered out by the decoder, which
+			// leaves hasSigInfo false for it.
 			if pkt.hasSigInfo {
 				bb, ns := pkt.basebandDBFS, pkt.noiseDBFS
 				if math.IsNaN(float64(bb)) || math.IsNaN(float64(ns)) ||
 					math.IsInf(float64(bb), 0) || math.IsInf(float64(ns), 0) {
 					if !nanSigInfoLogged {
-						log.Printf("[%s] v2 packet has NaN/Inf signal-quality fields (bb=%.3g noise=%.3g) — SNR will not be recorded for this channel", inst.label, bb, ns)
+						log.Printf("[%s] packet has NaN/Inf signal-quality fields (bb=%.3g noise=%.3g) — SNR will not be recorded for this channel", inst.label, bb, ns)
 						nanSigInfoLogged = true
 					}
 				} else {

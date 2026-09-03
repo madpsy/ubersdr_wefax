@@ -9,7 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o /out/ubersdr_wefax ./...
+RUN go build -o /out/ubersdr_wefax .
 
 # ---------------------------------------------------------------------------
 # Stage 2: minimal runtime image

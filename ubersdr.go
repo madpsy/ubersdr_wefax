@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -551,9 +552,20 @@ func (inst *instance) runOnce(ctx context.Context) (reconnect bool) {
 
 	hdr := http.Header{}
 	hdr.Set("User-Agent", "ubersdr_wefax/1.0")
-	conn, _, err := wsDialer.Dial(wsAddr, hdr)
+	conn, resp, err := wsDialer.Dial(wsAddr, hdr)
 	if err != nil {
-		log.Printf("[%s] websocket dial: %v", inst.label, err)
+		// A server that will not serve the protocol version asked for refuses
+		// before the upgrade, with the reason in the body -- "Unsupported
+		// protocol version 4. This server supports 1-3." Without it the dial
+		// reports only "bad handshake", which says nothing about why.
+		if resp != nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			log.Printf("[%s] websocket dial: %v (HTTP %d: %s)",
+				inst.label, err, resp.StatusCode, strings.TrimSpace(string(body)))
+		} else {
+			log.Printf("[%s] websocket dial: %v", inst.label, err)
+		}
 		return true
 	}
 	defer conn.Close()

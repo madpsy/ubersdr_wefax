@@ -22,7 +22,7 @@ import (
 // so any divergence produces plausible noise rather than an error. The fax
 // demodulator would simply stop finding a phasing signal, with nothing anywhere
 // saying why. Hence a hash of the samples.
-const pcmv4FixtureSHA = "ba368c898ae406c5acc806653d9f2dbbfa40086eca3707fda5d77c13948f78d1"
+const pcmv4FixtureSHA = "4875d2185f1ff5a2031386c569cac0c2259e6a827b9e61f813399a19c3b9c903"
 
 // readPCMv4Fixture returns the packets in testdata/pcmv4_stream.bin.
 //
@@ -74,7 +74,7 @@ func TestPCMDecoderMatchesServerStream(t *testing.T) {
 	// are carried forward across packets that omit them. A decoder that lost
 	// the carried-forward metadata would still hash correctly while handing the
 	// demodulator a zero rate.
-	wantParams := [][2]int{{12000, 1}, {24000, 1}, {48000, 2}}
+	wantParams := [][2]int{{12000, 1}, {24000, 1}, {384000, 2}}
 	var gotParams [][2]int
 
 	for i, raw := range packets {

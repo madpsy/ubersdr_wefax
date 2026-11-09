@@ -31,6 +31,7 @@ const (
 	MsgImageLine byte = 0x01 // [type:1][line:4BE][width:4BE][pixels:width]
 	MsgStart     byte = 0x02 // [type:1]
 	MsgStop      byte = 0x03 // [type:1]
+	MsgPhasing   byte = 0x04 // [type:1][ok:1] — sent once per image when phasing completes
 )
 
 // FIRFilter implements a 17-tap low-pass filter
@@ -413,8 +414,10 @@ func (d *WEFAXDecoder) decodeFaxLine(resultChan chan<- []byte) {
 			if (ninetyPct - tenPct) > d.samplesPerLine/6 {
 				log.Printf("[WEFAX] Bad phasing data detected, ignoring")
 				d.phasingSkipData = 0
+				d.sendPhasing(resultChan, false)
 			} else {
 				log.Printf("[WEFAX] Phasing detected: skip=%d pixels", d.phasingSkipData)
+				d.sendPhasing(resultChan, true)
 			}
 		}
 	}
@@ -613,6 +616,20 @@ func (d *WEFAXDecoder) sendStartSignal(resultChan chan<- []byte) {
 	select {
 	case resultChan <- msg:
 		log.Printf("[WEFAX] Sent START signal")
+	default:
+	}
+}
+
+// sendPhasing reports whether this image's phasing lines gave a usable line
+// start.  When they did not, the line start is arbitrary and the image is
+// wrapped at a random column, which alignRows can undo from the margin.
+func (d *WEFAXDecoder) sendPhasing(resultChan chan<- []byte, ok bool) {
+	msg := []byte{MsgPhasing, 0}
+	if ok {
+		msg[1] = 1
+	}
+	select {
+	case resultChan <- msg:
 	default:
 	}
 }

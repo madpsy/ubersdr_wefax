@@ -14,6 +14,7 @@ UberSDR (remote SDR) --► ubersdr_wefax (Go) --► decoded fax images
 
 - **`ubersdr_wefax`** — Go service that connects to UberSDR via WebSocket, streams demodulated audio, and runs a built-in WEFAX decoder per channel
 - **WEFAX decoder** — FM demodulation, 17-tap FIR low-pass filter, horizontal phasing, START/STOP tone detection (DFT at 300/450 Hz), grayscale image assembly
+- **Slant and margin correction** — straightens charts from stations whose line rate is a few ppm off 120 lpm, and unwraps charts whose phasing failed (see below)
 - **Web gallery** — live scrolling fax strip with per-channel selector, gallery of completed images with SNR metadata, audio preview; served on port 6094
 
 Multiple frequencies are decoded in parallel — each channel runs its own independent WebSocket connection and decoder.
@@ -54,6 +55,7 @@ All configuration is via environment variables in `docker-compose.yml`:
 | `NO_PHASING` | `0` | Set to `1` to disable horizontal phasing sync |
 | `NO_AUTOSTOP` | `0` | Set to `1` to disable auto-stop on STOP tone |
 | `NO_AUTOSTART` | `0` | Set to `1` to disable auto-start on START tone |
+| `NO_ALIGN` | `0` | Set to `1` to disable slant and margin correction of saved images |
 
 ### Supported modes
 
@@ -134,6 +136,7 @@ All flags:
 | `-no-phasing` | _(off)_ | Disable horizontal phasing sync |
 | `-no-autostop` | _(off)_ | Disable auto-stop on STOP tone |
 | `-no-autostart` | _(off)_ | Disable auto-start on START tone |
+| `-no-align` | _(off)_ | Disable slant and margin correction of saved images |
 
 ---
 
@@ -148,6 +151,31 @@ Open `http://<host>:6094` in a browser to view:
 
 ---
 
+## Slant and margin correction
+
+Some stations' line rate is slightly off 120 lpm, so their charts come out
+slanted on every receiver: Northwood (GYA) by about −34 ppm, DWD by about
++6 ppm. Each saved chart is straightened before it is written.
+
+Nothing is configured per station. Each chart's slant is measured from its
+strongest straight vertical line (the margin or a map frame), and the slant
+applied is the median of the recent measurements on that frequency, so one
+odd chart (such as one with steep meridians) can't throw it off. The
+calibration takes a handful of charts per frequency and is rebuilt from the
+saved images on restart.
+
+When the decoder's phasing fails, the chart is wrapped at an arbitrary
+column; the margin is then found and moved to the left edge. Correctly phased
+charts are never shifted.
+
+Each line is only rotated, never cropped, and the sidecar records what was
+done (`align_shift`, `align_slant`, `align_ppm`, `measured_ppm`, `phasing`),
+so the image as received can always be rebuilt. Set `NO_ALIGN=1` to save
+images exactly as received. The live strip in the web gallery shows lines as
+received; the correction applies to the saved image.
+
+---
+
 ## Output files
 
 Each completed fax image produces three files in the output directory:
@@ -156,7 +184,7 @@ Each completed fax image produces three files in the output directory:
 |------|-------------|
 | `<timestamp>_<id>.png` | Full-resolution grayscale PNG |
 | `<timestamp>_<id>_thumb.png` | Thumbnail (max 400 px wide) |
-| `<timestamp>_<id>.json` | Sidecar metadata (frequency, mode, timestamps, SNR stats) |
+| `<timestamp>_<id>.json` | Sidecar metadata (frequency, mode, timestamps, SNR stats, slant/margin correction) |
 
 ---
 

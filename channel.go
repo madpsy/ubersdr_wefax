@@ -53,7 +53,14 @@ type inProgressImage struct {
 	label     string
 	snr       SNRStats // drained from instance at STOP time
 	startSeen bool     // true only when a real START tone opened this image
+	phasing   string   // phasingOK, phasingBad, or "" when phasing never completed
 }
+
+// Values of inProgressImage.phasing / imageRecord.Phasing.
+const (
+	phasingOK  = "ok"
+	phasingBad = "bad"
+)
 
 func newWefaxChannel(inst *instance, cfg WEFAXConfig, store *imageStore, hub *sseHub) *wefaxChannel {
 	return &wefaxChannel{
@@ -160,6 +167,8 @@ func (c *wefaxChannel) assembleImages(ctx context.Context) {
 				c.handleStop()
 			case MsgImageLine:
 				c.handleImageLine(msg)
+			case MsgPhasing:
+				c.handlePhasing(msg)
 			}
 		}
 	}
@@ -293,6 +302,22 @@ func (c *wefaxChannel) snapshotRows() (freqHz int, rows [][]byte, rowSNR []float
 	rowSNR = make([]float32, len(c.currentImg.rowSNR))
 	copy(rowSNR, c.currentImg.rowSNR)
 	return
+}
+
+func (c *wefaxChannel) handlePhasing(msg []byte) {
+	if len(msg) < 2 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentImg == nil {
+		return
+	}
+	if msg[1] != 0 {
+		c.currentImg.phasing = phasingOK
+	} else {
+		c.currentImg.phasing = phasingBad
+	}
 }
 
 func (c *wefaxChannel) handleImageLine(msg []byte) {

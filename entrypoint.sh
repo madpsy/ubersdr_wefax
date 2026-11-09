@@ -12,6 +12,7 @@
 #   NO_PHASING             Set to 1 to disable horizontal phasing sync
 #   NO_AUTOSTOP            Set to 1 to disable auto-stop on STOP tone
 #   NO_AUTOSTART           Set to 1 to disable auto-start on START tone
+#   NO_ALIGN               Set to 1 to disable slant and margin correction of saved images
 #   CLEANUP_PARTIAL_DAYS   Delete partial images older than N days (0=disabled, default 7)
 #   CLEANUP_SNR_DAYS       Delete low-SNR images (below ~5.3 dB avg passband SNR) older than N days (0=disabled, default 7)
 #   CLEANUP_ALL_DAYS       Delete ALL images older than N days (0=disabled, default 30)
@@ -30,6 +31,7 @@ args="$args -output $OUTPUT_DIR"
 [ "$NO_PHASING"   = "1" ] && args="$args -no-phasing"
 [ "$NO_AUTOSTOP"  = "1" ] && args="$args -no-autostop"
 [ "$NO_AUTOSTART" = "1" ] && args="$args -no-autostart"
+[ "$NO_ALIGN"     = "1" ] && args="$args -no-align"
 [ -n "$CLEANUP_PARTIAL_DAYS" ] && args="$args -cleanup-partial-days $CLEANUP_PARTIAL_DAYS"
 [ -n "$CLEANUP_SNR_DAYS"     ] && args="$args -cleanup-snr-days $CLEANUP_SNR_DAYS"
 [ -n "$CLEANUP_ALL_DAYS"     ] && args="$args -cleanup-all-days $CLEANUP_ALL_DAYS"

@@ -399,3 +399,25 @@ func TestFaxLineSNRIsNullOnlyWhenUnmeasured(t *testing.T) {
 		t.Errorf("snr_db = %v for a -6 dB measurement, want a negative float32", v)
 	}
 }
+
+// The partial, SNR and age workers run concurrently and can each select the
+// same record. The second deletion used to compute
+// make([]*imageRecord, 0, len(store.records)-1) against an already-emptied
+// store and panic with "makeslice: cap out of range", taking the whole
+// container down. A record that is already gone must be a no-op.
+func TestDeleteRecordFilesTwiceDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	store := newImageStore(dir, newSSEHub())
+	rec := recordWithSNR("dup", 4, snrDBGoodV4, time.Now().Add(-60*24*time.Hour))
+	store.add(rec)
+
+	deleteRecordFiles(store, dir, rec, "partial")
+	deleteRecordFiles(store, dir, rec, "older than 30 days")
+
+	if len(store.records) != 0 || len(store.byID) != 0 {
+		t.Fatalf("store not empty: %d records, %d byID", len(store.records), len(store.byID))
+	}
+	if _, ok := store.deleted["dup"]; !ok {
+		t.Fatal("record not marked deleted")
+	}
+}

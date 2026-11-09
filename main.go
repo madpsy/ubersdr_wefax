@@ -57,6 +57,7 @@ func main() {
 		noPhasing   = flag.Bool("no-phasing", false, "Disable phasing (horizontal sync)")
 		noAutoStop  = flag.Bool("no-autostop", false, "Disable auto-stop on STOP tone")
 		noAutoStart = flag.Bool("no-autostart", false, "Disable auto-start on START tone")
+		noAlign     = flag.Bool("no-align", false, "Disable slant and margin correction of saved images")
 		uiPassword  = flag.String("ui-password", envOr("UI_PASSWORD", ""),
 			"Password required for write actions in the web UI (env: UI_PASSWORD; empty = write actions disabled)")
 
@@ -100,6 +101,10 @@ func main() {
 
 	hub := newSSEHub()
 	store := newImageStore(*outputDir, hub)
+	store.align = !*noAlign
+	if store.align {
+		go store.seedSlants()
+	}
 
 	// Start background cleanup workers (no-ops when their day threshold is 0).
 	startPartialCleanup(store, *outputDir, *cleanupPartialDays)

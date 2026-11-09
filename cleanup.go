@@ -306,6 +306,29 @@ func runAgeCleanup(store *imageStore, outputDir string, keepDays int) {
 func deleteRecordFiles(store *imageStore, outputDir string, rec *imageRecord, reason string) {
 	id := rec.ID
 
+	// Claim the record before touching disk.  The partial, SNR and age workers
+	// run concurrently and pick candidates from separate snapshots, so the same
+	// record can be selected by more than one of them (an old partial image is
+	// both "partial" and "older than N days"), and the DELETE handler can race
+	// them too.  Whoever removes it from the store first owns the deletion;
+	// everyone else skips it.  Mark it deleted so loadExisting() on restart
+	// cannot re-insert it.
+	store.mu.Lock()
+	if _, ok := store.byID[id]; !ok {
+		store.mu.Unlock()
+		return
+	}
+	store.deleted[id] = struct{}{}
+	delete(store.byID, id)
+	filtered := make([]*imageRecord, 0, len(store.records))
+	for _, r := range store.records {
+		if r.ID != id {
+			filtered = append(filtered, r)
+		}
+	}
+	store.records = filtered
+	store.mu.Unlock()
+
 	// Remove image and thumbnail files.
 	for _, name := range []string{rec.Filename, rec.ThumbFile} {
 		if name == "" {
@@ -348,20 +371,6 @@ func deleteRecordFiles(store *imageStore, outputDir string, rec *imageRecord, re
 			}
 		}
 	}
-
-	// Remove from in-memory store and mark as deleted so loadExisting() on
-	// restart cannot re-insert this record.
-	store.mu.Lock()
-	store.deleted[id] = struct{}{}
-	delete(store.byID, id)
-	filtered := make([]*imageRecord, 0, len(store.records)-1)
-	for _, r := range store.records {
-		if r.ID != id {
-			filtered = append(filtered, r)
-		}
-	}
-	store.records = filtered
-	store.mu.Unlock()
 
 	// Broadcast a delete SSE event so every open browser tab removes the card.
 	store.hub.broadcast(sseEvent{

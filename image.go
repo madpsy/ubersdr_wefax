@@ -59,6 +59,24 @@ type imageRecord struct {
 	// before the version 4 migration and is on the old scale.  See
 	// snrThresholdFor in cleanup.go, which refuses to prune those.
 	AudioProtocol int `json:"audio_protocol,omitempty"`
+
+	// Slant and margin correction (align.go).  Line y was moved left by
+	// round(AlignShift + AlignSlant*y) pixels, wrapping.  The move loses
+	// nothing, so the image as received can be rebuilt by moving each line
+	// back.  AlignPPM is AlignSlant as a line-rate error.
+	//
+	// Aligned marks a PNG that went through alignImage, even if it was not
+	// moved; without it the PNG is as received (an older sidecar, or
+	// -no-align).  MeasuredPPM is this chart's own slant measurement, which
+	// feeds the per-frequency consensus; absent when it had no usable line.
+	// Phasing is the decoder's phasing outcome, phasingOK or phasingBad, or
+	// absent when phasing never completed.
+	Aligned     bool     `json:"aligned,omitempty"`
+	AlignShift  int      `json:"align_shift,omitempty"`
+	AlignSlant  float64  `json:"align_slant,omitempty"`
+	AlignPPM    float64  `json:"align_ppm,omitempty"`
+	MeasuredPPM *float64 `json:"measured_ppm,omitempty"`
+	Phasing     string   `json:"phasing,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +90,8 @@ type imageStore struct {
 	deleted   map[string]struct{} // IDs removed by cleanup; prevents re-insertion on restart
 	hub       *sseHub             // for broadcasting delete events from cleanup workers
 	outputDir string
+	align     bool            // apply slant and margin correction (align.go) on save
+	slants    *slantConsensus // per-frequency slant, see align.go
 }
 
 func newImageStore(outputDir string, hub *sseHub) *imageStore {
@@ -80,9 +100,76 @@ func newImageStore(outputDir string, hub *sseHub) *imageStore {
 		deleted:   make(map[string]struct{}),
 		hub:       hub,
 		outputDir: outputDir,
+		slants:    newSlantConsensus(),
 	}
 	s.loadExisting()
 	return s
+}
+
+// seedSlants fills the slant consensus from the most recent saved images on
+// each frequency, so a restart does not lose the calibration.  Aligned
+// images contribute the measurement in their sidecar.  Older images have
+// none, but their PNG is as received, so it is measured; that is about half
+// a second per image, hence the cap and the caller running it in the
+// background.
+func (s *imageStore) seedSlants() {
+	s.mu.RLock()
+	byFreq := make(map[int][]*imageRecord)
+	for _, r := range s.records { // newest first
+		if len(byFreq[r.FreqHz]) < consensusKeep {
+			byFreq[r.FreqHz] = append(byFreq[r.FreqHz], r)
+		}
+	}
+	s.mu.RUnlock()
+
+	for freq, recs := range byFreq {
+		measured := 0
+		for i := len(recs) - 1; i >= 0; i-- { // oldest first
+			r := recs[i]
+			if r.Aligned {
+				if r.MeasuredPPM != nil {
+					s.slants.add(freq, *r.MeasuredPPM)
+				}
+				continue
+			}
+			rows, err := readGrayRows(filepath.Join(s.outputDir, r.Filename))
+			if err != nil {
+				continue
+			}
+			if ppm, ok := measureSlant(rows); ok {
+				s.slants.add(freq, ppm)
+			}
+			measured++
+		}
+		if ppm, ok := s.slants.get(freq); ok {
+			log.Printf("[align] %d Hz: slant %.1f ppm from recent images (%d measured from PNG)", freq, ppm, measured)
+		} else {
+			log.Printf("[align] %d Hz: no slant consensus yet (%d measured from PNG)", freq, measured)
+		}
+	}
+}
+
+// readGrayRows decodes a greyscale PNG into rows of pixels.
+func readGrayRows(path string) ([][]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		return nil, err
+	}
+	g, ok := img.(*image.Gray)
+	if !ok {
+		return nil, fmt.Errorf("%s: not greyscale", path)
+	}
+	w, h := g.Bounds().Dx(), g.Bounds().Dy()
+	rows := make([][]byte, h)
+	for y := range rows {
+		rows[y] = append([]byte(nil), g.Pix[y*g.Stride:y*g.Stride+w]...)
+	}
+	return rows, nil
 }
 
 // loadExisting scans outputDir for *.json sidecar files and populates the store.
@@ -224,6 +311,17 @@ func saveImage(img *inProgressImage, store *imageStore, hub *sseHub) error {
 	width := len(img.rows[0])
 	height := len(img.rows)
 
+	var al alignResult
+	if store.align {
+		al = alignImage(img.rows, img.freqHz, img.phasing == phasingOK, store.slants)
+		measured := "none"
+		if al.measuredPPM != nil {
+			measured = fmt.Sprintf("%.1f ppm", *al.measuredPPM)
+		}
+		log.Printf("[saveImage] align %s: slant %.1f ppm (this chart: %s), shift %d px, phasing %q",
+			img.label, al.ppm, measured, al.shift, img.phasing)
+	}
+
 	// Build grayscale PNG.
 	gray := image.NewGray(image.Rect(0, 0, width, height))
 	for y, row := range img.rows {
@@ -271,6 +369,12 @@ func saveImage(img *inProgressImage, store *imageStore, hub *sseHub) error {
 		// Stamp the scale the SNR figures are on, so the cleanup worker never
 		// has to infer it. See imageRecord.AudioProtocol.
 		AudioProtocol: pcmv4.ProtocolVersion,
+		Aligned:       store.align,
+		AlignShift:    al.shift,
+		AlignSlant:    al.slant,
+		AlignPPM:      al.ppm,
+		MeasuredPPM:   al.measuredPPM,
+		Phasing:       img.phasing,
 	}
 
 	// Write JSON sidecar atomically: marshal → temp file → rename, so a
